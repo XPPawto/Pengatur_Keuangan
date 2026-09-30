@@ -1,0 +1,50 @@
+{
+  "name": "dompetkos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DompetKos: website + bot WhatsApp budget mingguan (sistem amplop)",
+  "scripts": {
+    "setup": "tsx scripts/setup.ts",
+    "dev": "concurrently -n web,bot -c blue,green \"npm:dev:web\" \"npm:dev:bot\"",
+    "dev:web": "next dev",
+    "dev:bot": "tsx watch bot/index.ts",
+    "build": "prisma generate && next build",
+    "start": "concurrently -n web,bot -c blue,green \"npm:start:web\" \"npm:start:bot\"",
+    "start:web": "next start",
+    "start:bot": "tsx bot/index.ts",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "prisma db push --force-reset && tsx prisma/seed.ts",
+    "set-password": "tsx scripts/set-password.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "dotenv": "^18.0.5",
+    "next": "^15.5.27",
+    "pino": "^10.3.1",
+    "qrcode": "^1.5.4",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^26.6.3",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "concurrently": "^10.0.5",
+    "prisma": "^6.19.3",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

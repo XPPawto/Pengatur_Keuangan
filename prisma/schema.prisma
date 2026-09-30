@@ -1,0 +1,221 @@
+// DompetKos — skema database.
+// Aturan: nominal = integer Rupiah. Timestamp = UTC. Kolom tanggal (String "YYYY-MM-DD") = tanggal kalender WIB.
+// SQLite tidak punya enum/array, jadi pilihan nilai dicatat di komentar dan dijaga di src/lib/types.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Definisi amplop. kode: makan | data | paylater | kado | darurat
+model Envelope {
+  id             Int     @id @default(autoincrement())
+  kode           String  @unique
+  nama           String
+  jenis          String // daily | fixed | sinking | goal | remainder
+  defaultNominal Int     @default(0)
+  urutanPotong   Int? // urutan dipotong saat uang kurang (1 = pertama); null = tidak pernah dipotong otomatis
+  terkunci       Boolean @default(false)
+  urutanTampil   Int     @default(0)
+
+  allocations  Allocation[]
+  transactions Transaction[]
+  transfersOut Transfer[]    @relation("TransferFrom")
+  transfersIn  Transfer[]    @relation("TransferTo")
+  plans        AllocationPlan[]
+  bills        Bill[]
+  goals        Goal[]
+}
+
+// Satu per minggu (Minggu–Sabtu). status: menunggu | aktif | selesai
+model Period {
+  id             Int       @id @default(autoincrement())
+  tanggalMulai   String
+  tanggalSelesai String
+  pemasukan      Int
+  status         String
+  dikonfirmasiPada DateTime?
+  createdAt      DateTime  @default(now())
+
+  allocations  Allocation[]
+  transactions Transaction[]
+  transfers    Transfer[]
+}
+
+model Allocation {
+  id         Int      @id @default(autoincrement())
+  periodId   Int
+  envelopeId Int
+  nominal    Int
+  period     Period   @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  envelope   Envelope @relation(fields: [envelopeId], references: [id])
+
+  @@unique([periodId, envelopeId])
+}
+
+// Rencana pembagian per tanggal mulai periode (seed dari PRD). Dipakai untuk usulan saat `masuk`.
+model AllocationPlan {
+  id           Int      @id @default(autoincrement())
+  tanggalMulai String
+  envelopeId   Int
+  nominal      Int
+  envelope     Envelope @relation(fields: [envelopeId], references: [id])
+
+  @@unique([tanggalMulai, envelopeId])
+}
+
+// jenis: keluar | koreksi. sumber: wa | web
+model Transaction {
+  id         Int      @id @default(autoincrement())
+  periodId   Int
+  envelopeId Int
+  nominal    Int
+  jenis      String   @default("keluar")
+  catatan    String   @default("")
+  sumber     String
+  pesanAsli  String?
+  tanggal    String // tanggal WIB transaksi
+  dibuatPada DateTime @default(now())
+  period     Period   @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  envelope   Envelope @relation(fields: [envelopeId], references: [id])
+
+  @@index([periodId, envelopeId])
+  @@index([tanggal])
+}
+
+model Transfer {
+  id           Int      @id @default(autoincrement())
+  periodId     Int
+  dariEnvelopeId Int
+  keEnvelopeId Int
+  nominal      Int
+  alasan       String
+  dibuatPada   DateTime @default(now())
+  period       Period   @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  dari         Envelope @relation("TransferFrom", fields: [dariEnvelopeId], references: [id])
+  ke           Envelope @relation("TransferTo", fields: [keEnvelopeId], references: [id])
+}
+
+// status: belum | lunas
+model Bill {
+  id           Int       @id @default(autoincrement())
+  nama         String
+  nominal      Int
+  jatuhTempo   String
+  tanggalPasti Boolean   @default(true)
+  envelopeId   Int?
+  status       String    @default("belum")
+  dibayarPada  DateTime?
+  catatan      String    @default("")
+  envelope     Envelope? @relation(fields: [envelopeId], references: [id])
+}
+
+model Goal {
+  id          Int      @id @default(autoincrement())
+  nama        String
+  targetMin   Int
+  targetIdeal Int
+  tenggat     String
+  envelopeId  Int
+  envelope    Envelope @relation(fields: [envelopeId], references: [id])
+}
+
+// Daftar belanja + kamus parser. kataKunci = JSON array string.
+model ShoppingItem {
+  id          Int     @id @default(autoincrement())
+  nama        String
+  jumlah      Float
+  satuan      String
+  hargaSatuan Int
+  kataKunci   String  @default("[]")
+  envelopeKode String @default("makan")
+  aktif       Boolean @default(true)
+  urutan      Int     @default(0)
+}
+
+// Mode tahan belanja (Fase 3). hasil: beli | batal | menunggu
+model HoldRequest {
+  id            Int       @id @default(autoincrement())
+  barang        String
+  nominal       Int
+  dibuatPada    DateTime  @default(now())
+  tanyaUlangPada DateTime
+  hasil         String    @default("menunggu")
+}
+
+model DailyLog {
+  tanggal      String  @id
+  adaCatatan   Boolean @default(false)
+  tanpaJajan   Boolean @default(false)
+  jatahHariItu Int     @default(0)
+  totalMakan   Int     @default(0)
+}
+
+// Pengingat terjadwal (Fase 2).
+model ReminderSetting {
+  jenis String  @id
+  jam   String
+  aktif Boolean @default(true)
+}
+
+// arah: masuk | keluar
+model MessageLog {
+  id    Int      @id @default(autoincrement())
+  arah  String
+  nomor String
+  isi   String
+  waktu DateTime @default(now())
+}
+
+model AllowedNumber {
+  id            Int     @id @default(autoincrement())
+  nomor         String  @unique
+  label         String
+  terimaPengingat Boolean @default(true)
+}
+
+// Satu baris (id = 1). status: terhubung | terputus | menunggu_pairing
+model WaConnection {
+  id           Int       @id
+  status       String    @default("terputus")
+  nomorBot     String?
+  qr           String? // string QR mentah dari WhatsApp (diubah jadi gambar oleh website)
+  pairingCode  String?
+  terhubungPada DateTime?
+  terputusPada DateTime?
+  alasan       String?
+  updatedAt    DateTime  @default(now())
+}
+
+// Riwayat koneksi WhatsApp. peristiwa: terhubung | terputus | logout | pairing
+model WaConnectionLog {
+  id        Int      @id @default(autoincrement())
+  peristiwa String
+  alasan    String?
+  waktu     DateTime @default(now())
+}
+
+// Perintah dari website ke bot worker. perintah: connect_qr | connect_code | logout
+model WaCommand {
+  id         Int       @id @default(autoincrement())
+  perintah   String
+  nomor      String?
+  dibuatPada DateTime  @default(now())
+  diprosesPada DateTime?
+}
+
+// Percakapan bertahap di WhatsApp (konfirmasi `ok`, pilih kategori, dst). jenis: masuk | batal | kategori
+model PendingAction {
+  id         Int      @id @default(autoincrement())
+  nomor      String
+  jenis      String
+  payload    String
+  kedaluwarsa DateTime
+  dibuatPada DateTime @default(now())
+
+  @@index([nomor])
+}
