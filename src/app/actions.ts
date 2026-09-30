@@ -9,10 +9,14 @@ import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "@/lib/auth/tok
 import { prisma } from "@/lib/db";
 import { parseAmount } from "@/lib/parser/amount";
 import { AppError } from "@/lib/services/errors";
-import { cancelPendingPeriod, confirmPeriod, getPendingPeriod, proposePeriod } from "@/lib/services/periods";
+import { cancelPendingPeriod, getPendingPeriod, proposePeriod } from "@/lib/services/periods";
+import { confirmPeriodAndNotify } from "@/lib/services/notify";
+import { verifyLoginCode, requestLoginCode } from "@/lib/services/otp";
 import { markTanpaJajan } from "@/lib/services/daily";
 import { deleteTransaction, recordExpense, updateTransaction } from "@/lib/services/transactions";
 import { ENVELOPE_KODE, type EnvelopeKode } from "@/lib/types";
+import { rp } from "@/lib/money";
+import { wibDate } from "@/lib/time";
 
 export interface FormState {
   error?: string;
@@ -23,6 +27,11 @@ function pesanError(e: unknown): string {
   if (e instanceof AppError) return e.message;
   console.error(e);
   return "Ada error di server. Coba lagi.";
+}
+
+function tanggalForm(form: FormData): string | undefined {
+  const t = String(form.get("tanggal") ?? "");
+  return /^\d{4}-\d{2}-\d{2}$/.test(t) && t !== wibDate(new Date()) ? t : undefined;
 }
 
 function kodeValid(v: FormDataEntryValue | null): EnvelopeKode | null {
@@ -43,6 +52,11 @@ export async function login(_: FormState, form: FormData): Promise<FormState> {
     return { error: "Password salah." };
   }
   resetLoginGagal();
+  await setSessionCookie(secret);
+  redirect("/");
+}
+
+async function setSessionCookie(secret: string) {
   const jar = await cookies();
   jar.set(SESSION_COOKIE, await signSession(secret), {
     httpOnly: true,
@@ -51,6 +65,28 @@ export async function login(_: FormState, form: FormData): Promise<FormState> {
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
   });
+}
+
+export async function mintaKodeLogin(_: FormState): Promise<FormState> {
+  if (loginTerkunci()) return { error: "Kebanyakan percobaan. Coba lagi 15 menit lagi." };
+  try {
+    await requestLoginCode(prisma, new Date());
+  } catch (e) {
+    return { error: pesanError(e) };
+  }
+  return { ok: "Kode dikirim ke WhatsApp pemilik. Berlaku 5 menit." };
+}
+
+export async function loginKode(_: FormState, form: FormData): Promise<FormState> {
+  if (loginTerkunci()) return { error: "Kebanyakan percobaan. Coba lagi 15 menit lagi." };
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) return { error: "SESSION_SECRET belum diatur di .env." };
+  if (!(await verifyLoginCode(prisma, String(form.get("kode") ?? ""), new Date()))) {
+    catatLoginGagal();
+    return { error: "Kode salah atau sudah kedaluwarsa." };
+  }
+  resetLoginGagal();
+  await setSessionCookie(secret);
   redirect("/");
 }
 
@@ -76,12 +112,13 @@ export async function catatPengeluaran(_: FormState, form: FormData): Promise<Fo
       sumber: "web",
       now: new Date(),
       konfirmasiBukaKunci: String(form.get("konfirmasi") ?? ""),
+      tanggal: tanggalForm(form),
     });
   } catch (e) {
     return { error: pesanError(e) };
   }
   revalidatePath("/", "layout");
-  return { ok: `Tercatat ${String(form.get("catatan") ?? "").trim() || "pengeluaran"}.` };
+  return { ok: `Tercatat: ${String(form.get("catatan") ?? "").trim() || "pengeluaran"} ${rp(nominal)}.` };
 }
 
 export async function tandaiTanpaJajan() {
@@ -134,7 +171,7 @@ export async function usulkanUangMasuk(_: FormState, form: FormData): Promise<Fo
 export async function konfirmasiUangMasuk() {
   await requireLogin();
   const p = await getPendingPeriod(prisma);
-  if (p) await confirmPeriod(prisma, p.id, new Date()).catch(() => {});
+  if (p) await confirmPeriodAndNotify(prisma, p.id, new Date()).catch(() => {});
   revalidatePath("/", "layout");
 }
 

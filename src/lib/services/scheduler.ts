@@ -166,3 +166,9 @@ export async function jadwalkanPengingat(db: Db, now: Date): Promise<number> {
 
   return total;
 }
+
+export async function updateReminder(db: Db, jenis: JenisPengingat, jam: string, aktif: boolean) {
+  if (!PENGINGAT.some((p) => p.jenis === jenis)) throw new Error("Jenis pengingat tidak dikenal.");
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(jam)) throw new Error("Format jam HH:MM.");
+  await db.reminderSetting.upsert({ where: { jenis }, update: { jam, aktif }, create: { jenis, jam, aktif } });
+}

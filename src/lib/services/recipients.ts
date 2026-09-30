@@ -1,5 +1,6 @@
 import type { Db } from "../db";
 import { normalizePhone, ownerNumbers } from "../whitelist";
+import { AppError } from "./errors";
 
 export type Peran = "pemilik" | "keluarga";
 
@@ -63,4 +64,37 @@ export async function recipientsFor(db: Db, peran: Peran, filter?: Filter): Prom
       return true;
     })
     .map((r) => r.nomor);
+}
+
+export interface RecipientInput {
+  nomor: string;
+  label: string;
+  peran: Peran;
+  terimaPengingat: boolean;
+  terimaLaporan: boolean;
+  terimaKonfirmasiUang: boolean;
+  aktif?: boolean;
+}
+
+export async function saveRecipient(db: Db, r: RecipientInput) {
+  const nomor = normalizePhone(r.nomor);
+  if (!/^\d{9,15}$/.test(nomor)) throw new AppError("invalid", "Nomor tidak valid. Contoh: 0812xxxxxxxx.");
+  const bot = await db.waConnection.findUnique({ where: { id: 1 } });
+  if (bot?.nomorBot && bot.nomorBot === nomor) throw new AppError("invalid", "Itu nomor bot sendiri.");
+  const peran: Peran = ownerNumbers().includes(nomor) ? "pemilik" : r.peran;
+  const data = {
+    label: r.label.trim() || `Nomor ${nomor.slice(-4)}`,
+    peran,
+    terimaPengingat: r.terimaPengingat,
+    terimaLaporan: r.terimaLaporan,
+    terimaKonfirmasiUang: r.terimaKonfirmasiUang,
+    aktif: r.aktif ?? true,
+  };
+  return db.allowedNumber.upsert({ where: { nomor }, update: data, create: { nomor, ...data } });
+}
+
+export async function deleteRecipient(db: Db, nomorRaw: string) {
+  const nomor = normalizePhone(nomorRaw);
+  if (ownerNumbers().includes(nomor)) throw new AppError("invalid", "Nomor pemilik dari .env nggak bisa dihapus dari website.");
+  await db.allowedNumber.deleteMany({ where: { nomor } });
 }

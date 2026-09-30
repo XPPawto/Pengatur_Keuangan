@@ -1,172 +1,248 @@
+import Link from "next/link";
 import AutoRefresh from "@/components/AutoRefresh";
+import EnvelopeList from "@/components/EnvelopeList";
 import ProgressBar from "@/components/ProgressBar";
 import UangMasukForm from "@/components/UangMasukForm";
-import { batalkanUangMasuk, konfirmasiUangMasuk, logout, tandaiTanpaJajan } from "./actions";
+import { ENVELOPE_ICON, Icon } from "@/components/icons";
+import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
+import { batalkanUangMasuk, konfirmasiUangMasuk, tandaiTanpaJajan } from "./actions";
 import { prisma } from "@/lib/db";
-import { TONE_SOFT, TONE_TEXT, toneFor, type Tone } from "@/lib/format";
+import { TONE_TEXT, type Tone } from "@/lib/format";
 import { rp } from "@/lib/money";
 import { getDashboard } from "@/lib/services/dashboard";
-import { fmtRentang, fmtTanggal, fmtTanggalPanjang } from "@/lib/time";
+import { getSetting } from "@/lib/services/settings";
+import { fmtRentang, fmtTanggal, fmtTanggalPanjang, namaHari, wibHM } from "@/lib/time";
 import type { EnvelopeKode } from "@/lib/types";
 
 const NAMA: Record<EnvelopeKode, string> = { makan: "Makan", data: "Paket data", paylater: "Paylater", kado: "Tabungan kado", darurat: "Darurat & kos" };
 
 export default async function Beranda() {
-  const d = await getDashboard(prisma, new Date());
+  const now = new Date();
+  const [d, nama] = await Promise.all([getDashboard(prisma, now), getSetting(prisma, "nama_pengguna")]);
+  const { jam } = wibHM(now);
+  const sapa = jam < 11 ? "Selamat pagi" : jam < 15 ? "Selamat siang" : jam < 18 ? "Selamat sore" : "Selamat malam";
 
   return (
-    <main className="space-y-4">
+    <div className="space-y-5">
       <AutoRefresh />
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold">DompetKos</h1>
-          <p className="text-sm text-muted">
-            {d.period ? `Periode ${fmtRentang(d.period.tanggalMulai, d.period.tanggalSelesai)}` : "Belum ada periode aktif"}
-          </p>
-        </div>
-        <form action={logout}>
-          <button className="btn-ghost text-muted" type="submit">
-            Keluar
-          </button>
-        </form>
-      </header>
+      <PageHeader
+        title={`${sapa}, ${nama}`}
+        subtitle={
+          <>
+            {namaHari(d.hariIni)}, {fmtTanggalPanjang(d.hariIni)}
+            {d.period && <> · Periode {fmtRentang(d.period.tanggalMulai, d.period.tanggalSelesai)}</>}
+          </>
+        }
+        actions={
+          <Link href="/catat" className="btn hidden lg:inline-flex">
+            <Icon name="plus" size={18} />
+            Catat pengeluaran
+          </Link>
+        }
+      />
 
       {d.pending && (
-        <section className="card space-y-3 border-brand" aria-labelledby="usulan">
-          <h2 id="usulan" className="font-semibold">
-            Usulan pembagian — uang masuk {rp(d.pending.period.pemasukan)}
-          </h2>
-          <ul className="divide-y divide-line text-sm">
+        <Card title={`Usulan pembagian · uang masuk ${rp(d.pending.period.pemasukan)}`} icon="wallet" className="border-brand/40">
+          <ul className="grid grid-cols-2 gap-2 sm:grid-cols-5">
             {(Object.keys(NAMA) as EnvelopeKode[]).map((k) => (
-              <li key={k} className="flex justify-between py-1.5">
-                <span>{NAMA[k]}</span>
-                <span className="font-medium">{rp(d.pending!.alloc[k])}</span>
+              <li key={k} className="rounded-xl bg-subtle px-3 py-2.5">
+                <p className="flex items-center gap-1.5 text-xs text-muted">
+                  <Icon name={ENVELOPE_ICON[k]} size={14} />
+                  {NAMA[k]}
+                </p>
+                <p className="num mt-0.5 font-semibold">{rp(d.pending!.alloc[k])}</p>
               </li>
             ))}
           </ul>
-          <p className="text-sm text-muted">Konfirmasi setelah uangnya dipisah ke e-wallet tabungan.</p>
-          <div className="flex gap-2">
-            <form action={konfirmasiUangMasuk} className="flex-1">
-              <button className="btn w-full">Konfirmasi</button>
+          <p className="mt-3 text-sm text-muted">Konfirmasi setelah uang tabungan dipisah ke e-wallet.</p>
+          <div className="mt-3 flex gap-2">
+            <form action={konfirmasiUangMasuk} className="flex-1 sm:flex-none">
+              <button className="btn w-full">
+                <Icon name="check" size={18} />
+                Konfirmasi
+              </button>
             </form>
             <form action={batalkanUangMasuk}>
-              <button className="btn-ghost">Batal</button>
+              <button className="btn-secondary">Batal</button>
             </form>
           </div>
-        </section>
+        </Card>
       )}
 
       {!d.period && !d.pending && (
-        <section className="card space-y-3">
-          <h2 className="font-semibold">Uang mingguan udah masuk?</h2>
+        <Card title="Uang mingguan sudah masuk?" icon="wallet">
+          <p className="mb-3 text-sm text-muted">Masukkan nominalnya, nanti dibagi otomatis ke amplop sesuai rencana.</p>
           <UangMasukForm />
-        </section>
+        </Card>
       )}
 
-      {d.daily && <JatahCard daily={d.daily} />}
+      {d.daily && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+          <JatahCard daily={d.daily} />
+          <div className="grid grid-cols-2 gap-4 lg:col-span-2">
+            <MiniStat icon="flame" label="Streak" value={`${d.streak} hari`} hint="catat berturut-turut" />
+            <MiniStat icon="gift" label="Kado" value={d.goal ? `${Math.round(d.goal.persenMin)}%` : "-"} hint={d.goal ? rp(d.goal.saldo) : undefined} />
+            <MiniStat icon="umbrella" label="Darurat" value={rp(d.balances.find((b) => b.kode === "darurat")?.saldo ?? 0)} hint="dana cadangan" />
+            <MiniStat icon="shield" label="Diselamatkan" value={rp(d.hemat.total)} hint={`${d.hemat.jumlah} kali tahan belanja`} />
+          </div>
+        </div>
+      )}
 
-      {d.period && (
-        <section className="card space-y-4" aria-labelledby="amplop">
-          <h2 id="amplop" className="font-semibold">
-            Amplop
-          </h2>
-          {d.balances.map((b) => {
-            let persen = 0;
-            let tone: Tone | "brand" = "brand";
-            let info = "";
-            if (b.kode === "kado" && d.goal) {
-              persen = (b.saldo / d.goal.targetMin) * 100;
-              info = `dari target ${rp(d.goal.targetMin)}`;
-            } else if (b.kode === "paylater" && d.billPaylater) {
-              persen = (b.saldo / Math.max(1, d.billPaylater.nominal)) * 100;
-              info = `buat tagihan ${rp(d.billPaylater.nominal)} (${fmtTanggal(d.billPaylater.jatuhTempo)}) · ${b.saldo >= d.billPaylater.nominal ? "cukup" : `kurang ${rp(d.billPaylater.nominal - b.saldo)}`}`;
-            } else if (!b.kumulatif) {
-              persen = b.alokasi ? (b.saldo / b.alokasi) * 100 : 0;
-              tone = toneFor(b.saldo, b.alokasi);
-              info = `dari ${rp(b.alokasi)}`;
-            } else {
-              info = `tabungan · +${rp(b.alokasi)} minggu ini`;
-            }
-            return (
-              <div key={b.kode}>
-                <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                  <span className="font-medium">
-                    {NAMA[b.kode]} {b.terkunci && <span title="Terkunci" aria-label="terkunci">🔒</span>}
-                  </span>
-                  <span className={`font-semibold ${tone === "brand" ? "" : TONE_TEXT[tone]}`}>{rp(b.saldo)}</span>
-                </div>
-                {b.kode !== "darurat" && <ProgressBar persen={persen} tone={tone} label={NAMA[b.kode]} />}
-                <p className="mt-1 text-xs text-muted">{info}</p>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+        {d.period && (
+          <Card title="Amplop" icon="wallet" className="lg:col-span-3" action={<Link href="/amplop" className="text-sm font-medium text-brand">Kelola</Link>}>
+            <EnvelopeList balances={d.balances} targetKado={d.goal?.goal.targetMin} tagihanPaylater={d.billPaylater} />
+          </Card>
+        )}
+
+        <div className="space-y-4 lg:col-span-2">
+          <Card title="Tagihan terdekat" icon="calendar" action={<Link href="/tagihan" className="text-sm font-medium text-brand">Semua</Link>}>
+            {d.bills.length === 0 ? (
+              <p className="text-sm text-muted">Tidak ada tagihan yang belum lunas.</p>
+            ) : (
+              <ul className="space-y-2.5">
+                {d.bills.map((b) => {
+                  const tone: Tone = b.hariLagi < 0 ? "bad" : b.hariLagi <= 3 ? "warn" : "ok";
+                  return (
+                    <li key={b.id} className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="num truncate text-sm font-semibold">
+                          {b.nama} {rp(b.nominal)}
+                        </p>
+                        <p className="text-xs text-muted">
+                          {fmtTanggalPanjang(b.jatuhTempo)}
+                          {!b.tanggalPasti && " · perkiraan"}
+                          {!b.envelope && " · di luar amplop"}
+                        </p>
+                      </div>
+                      <Badge tone={tone} icon={tone === "ok" ? "clock" : "alert"}>
+                        {b.hariLagi < 0 ? `Lewat ${-b.hariLagi} hr` : b.hariLagi === 0 ? "Hari ini" : `H-${b.hariLagi}`}
+                      </Badge>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Card>
+
+          {d.goal && (
+            <Card title="Target kado" icon="target" action={<Link href="/target" className="text-sm font-medium text-brand">Detail</Link>}>
+              <div className="flex items-baseline justify-between">
+                <p className="num text-2xl font-bold">{rp(d.goal.saldo)}</p>
+                <p className="text-xs text-muted">{d.goal.hariLagi >= 0 ? `${d.goal.hariLagi} hari lagi` : "tenggat lewat"}</p>
               </div>
-            );
-          })}
-        </section>
-      )}
+              <div className="mt-2">
+                <ProgressBar persen={d.goal.persenMin} tone="brand" tebal label="Progres target kado" />
+              </div>
+              <p className="mt-2 text-xs text-muted">
+                Minimal {rp(d.goal.goal.targetMin)} · proyeksi {rp(d.goal.proyeksi)}{" "}
+                <Badge tone={d.goal.status === "kurang" ? "bad" : "ok"}>{d.goal.status === "kurang" ? "Kurang" : "Sesuai jalur"}</Badge>
+              </p>
+            </Card>
+          )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        {d.bill && (
-          <section className="card" aria-labelledby="tagihan">
-            <h2 id="tagihan" className="text-sm font-medium text-muted">
-              Tagihan terdekat
-            </h2>
-            <p className="mt-1 text-2xl font-bold">{rp(d.bill.nominal)}</p>
-            <p className="text-sm">
-              {d.bill.nama} · {fmtTanggalPanjang(d.bill.jatuhTempo)}
-              {!d.bill.tanggalPasti && <span className="text-muted"> (tanggal belum pasti)</span>}
-            </p>
-            <p className={`mt-2 inline-block rounded-lg px-2 py-0.5 text-sm font-medium ${TONE_SOFT[d.bill.hariLagi < 0 ? "bad" : d.bill.hariLagi <= 3 ? "warn" : "ok"]}`}>
-              {d.bill.hariLagi < 0 ? `Lewat ${-d.bill.hariLagi} hari` : d.bill.hariLagi === 0 ? "Hari ini!" : `H-${d.bill.hariLagi}`}
-            </p>
-          </section>
-        )}
-        {d.goal && (
-          <section className="card space-y-1" aria-labelledby="target">
-            <h2 id="target" className="text-sm font-medium text-muted">
-              Target kado
-            </h2>
-            <p className="text-2xl font-bold">{rp(d.goal.saldo)}</p>
-            <ProgressBar persen={(d.goal.saldo / d.goal.targetMin) * 100} tone="brand" label="Progres target kado" />
-            <p className="text-sm text-muted">
-              Min {rp(d.goal.targetMin)}, ideal {rp(d.goal.targetIdeal)} · {d.goal.hariLagi >= 0 ? `${d.goal.hariLagi} hari lagi` : "tenggat lewat"} ({fmtTanggalPanjang(d.goal.tenggat)})
-            </p>
-          </section>
-        )}
+          {d.period && (
+            <Card title="Hari ini" icon="receipt" action={<Link href="/riwayat" className="text-sm font-medium text-brand">Riwayat</Link>}>
+              {d.txHariIni.length === 0 ? (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm text-muted">Belum ada catatan hari ini.</p>
+                  <form action={tandaiTanpaJajan}>
+                    <button className="btn-secondary btn-sm">Tidak jajan</button>
+                  </form>
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {d.txHariIni.map((t) => (
+                    <li key={t.id} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Icon name={ENVELOPE_ICON[t.envelope.kode]} size={15} className="shrink-0 text-muted" />
+                        <span className="truncate">{t.catatan || "(tanpa catatan)"}</span>
+                      </span>
+                      <span className="num font-medium">{rp(t.nominal)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          )}
+        </div>
       </div>
 
-      <section className="card flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-muted">Streak disiplin</p>
-          <p className="text-2xl font-bold">{d.streak} hari 🔥</p>
-        </div>
-        <form action={tandaiTanpaJajan}>
-          <button className="btn-ghost">Hari ini gak jajan</button>
-        </form>
-      </section>
-    </main>
+      {!d.period && !d.pending && (
+        <EmptyState icon="message" title="Catat lebih cepat lewat WhatsApp">
+          Setelah bot tersambung, cukup kirim <code>tempe 5k</code> dan bot membalas sisa uang lo. Sambungkan di menu Koneksi WhatsApp.
+        </EmptyState>
+      )}
+      {d.holdsMenunggu > 0 && (
+        <p className="text-center text-sm text-muted">
+          {d.holdsMenunggu} pembelian sedang ditahan.{" "}
+          <Link href="/rekap#tahan" className="font-medium text-brand">
+            Lihat
+          </Link>
+        </p>
+      )}
+    </div>
+  );
+}
+
+function MiniStat({ icon, label, value, hint }: { icon: Parameters<typeof Icon>[0]["name"]; label: string; value: string; hint?: string }) {
+  return (
+    <div className="card p-3.5">
+      <p className="flex items-center gap-1.5 text-xs font-medium text-muted">
+        <Icon name={icon} size={15} />
+        {label}
+      </p>
+      <p className="num mt-1 truncate text-lg font-bold">{value}</p>
+      {hint && <p className="truncate text-xs text-muted">{hint}</p>}
+    </div>
   );
 }
 
 function JatahCard({ daily }: { daily: NonNullable<Awaited<ReturnType<typeof getDashboard>>["daily"]> }) {
   const selesai = daily.hariSisa === 0;
   const tone: Tone = daily.sisaJatahHariIni < 0 ? "bad" : daily.jatahHariIni > 0 && daily.sisaJatahHariIni / daily.jatahHariIni < 0.3 ? "warn" : "ok";
+  const label = tone === "bad" ? "Lewat jatah" : tone === "warn" ? "Menipis" : "Aman";
   return (
-    <section className="card" aria-labelledby="jatah">
-      <h2 id="jatah" className="text-sm font-medium text-muted">
-        Jatah makan hari ini
-      </h2>
+    <section className="card card-pad lg:col-span-3" aria-labelledby="jatah">
+      <div className="flex items-center justify-between">
+        <h2 id="jatah" className="flex items-center gap-2 text-sm font-medium text-muted">
+          <Icon name="utensils" size={17} />
+          Jatah makan hari ini
+        </h2>
+        {!selesai && (
+          <Badge tone={tone} icon={tone === "ok" ? "check" : "alert"}>
+            {label}
+          </Badge>
+        )}
+      </div>
       {selesai ? (
-        <p className="mt-1 text-lg font-semibold">Periode minggu ini udah lewat. Catat uang masuk buat mulai lagi.</p>
+        <p className="mt-3 text-lg font-semibold">Periode minggu ini sudah lewat. Catat uang masuk untuk mulai periode baru.</p>
       ) : (
         <>
-          <p className={`mt-1 text-4xl font-extrabold tracking-tight ${TONE_TEXT[tone]}`}>{rp(daily.jatahHariIni)}</p>
-          <p className="mt-2 text-sm">
-            Kepake <b>{rp(daily.makanHariIni)}</b> ·{" "}
-            <span className={TONE_TEXT[tone]}>{daily.sisaJatahHariIni >= 0 ? `sisa ${rp(daily.sisaJatahHariIni)}` : `lewat ${rp(-daily.sisaJatahHariIni)}`}</span>
-          </p>
-          <p className="mt-1 text-sm text-muted">
-            Sisa makan {rp(daily.saldoMakan)} buat {daily.hariSisa} hari
-            {daily.hariSisa > 1 ? ` · jatah besok ${rp(daily.jatahBesok)}` : ""}
-          </p>
+          <p className={`num mt-2 text-[44px] font-extrabold leading-none tracking-tight ${tone === "ok" ? "" : TONE_TEXT[tone]}`}>{rp(daily.jatahHariIni)}</p>
+          <div className="mt-4">
+            <ProgressBar persen={daily.jatahHariIni ? (daily.makanHariIni / daily.jatahHariIni) * 100 : 0} tone={tone} tebal label="Terpakai hari ini" />
+          </div>
+          <div className="mt-2 flex justify-between text-sm">
+            <span className="text-muted">
+              Terpakai <b className="num text-fg">{rp(daily.makanHariIni)}</b>
+            </span>
+            <span className={`num font-medium ${TONE_TEXT[tone]}`}>
+              {daily.sisaJatahHariIni >= 0 ? `Sisa ${rp(daily.sisaJatahHariIni)}` : `Lewat ${rp(-daily.sisaJatahHariIni)}`}
+            </span>
+          </div>
+          <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-line pt-4 text-sm">
+            <div>
+              <dt className="text-xs text-muted">Sisa amplop makan</dt>
+              <dd className="num font-semibold">
+                {rp(daily.saldoMakan)} <span className="font-normal text-muted">· {daily.hariSisa} hari</span>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">Jatah besok</dt>
+              <dd className="num font-semibold">{daily.hariSisa > 1 ? rp(daily.jatahBesok) : `Periode selesai ${fmtTanggal(daily.tanggalSelesai)}`}</dd>
+            </div>
+          </dl>
         </>
       )}
     </section>

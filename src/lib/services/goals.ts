@@ -2,6 +2,7 @@ import type { Db } from "../db";
 import { addDays, diffDays, sundayOnOrBefore, wibDate } from "../time";
 import { getBalances } from "./envelopes";
 import { getCurrentPeriod } from "./periods";
+import { AppError } from "./errors";
 
 export interface GoalPoint {
   minggu: string;
@@ -83,4 +84,12 @@ export async function getGoalProgress(db: Db, now: Date) {
     status,
     series,
   };
+}
+
+export async function updateGoal(db: Db, id: number, d: { nama: string; targetMin: number; targetIdeal: number; tenggat: string }) {
+  if (!d.nama.trim()) throw new AppError("invalid", "Nama target wajib diisi.");
+  if (!Number.isInteger(d.targetMin) || d.targetMin <= 0) throw new AppError("invalid", "Target minimal tidak valid.");
+  if (!Number.isInteger(d.targetIdeal) || d.targetIdeal < d.targetMin) throw new AppError("invalid", "Target ideal harus ≥ target minimal.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d.tenggat)) throw new AppError("invalid", "Tanggal tenggat tidak valid.");
+  return db.goal.update({ where: { id }, data: { ...d, nama: d.nama.trim() } });
 }

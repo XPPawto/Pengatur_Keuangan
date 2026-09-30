@@ -20,7 +20,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "postinstall": "prisma generate",
-    "wa:sim": "tsx scripts/sim-wa.ts"
+    "wa:sim": "tsx scripts/sim-wa.ts",
+    "demo": "tsx scripts/demo.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
