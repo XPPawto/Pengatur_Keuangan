@@ -188,6 +188,7 @@ model WaConnection {
   terhubungPada DateTime?
   terputusPada DateTime?
   alasan       String?
+  workerPing   DateTime? // detak terakhir dari proses bot (untuk deteksi bot mati)
   updatedAt    DateTime  @default(now())
 }
 

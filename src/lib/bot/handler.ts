@@ -237,8 +237,15 @@ async function cmdMasuk(db: Db, nomor: string, nominal: number | null, now: Date
 }
 
 async function konfirmasiMasuk(db: Db, nomor: string, periodId: number, now: Date): Promise<string[]> {
-  const { period, sisaMakanPindah } = await confirmPeriod(db, periodId, now);
   await clearPending(db, nomor);
+  let hasil: Awaited<ReturnType<typeof confirmPeriod>>;
+  try {
+    hasil = await confirmPeriod(db, periodId, now);
+  } catch (e) {
+    if (e instanceof AppError && e.code === "not_found") return ["Usulan itu udah dikonfirmasi atau dibatalin (mungkin dari website). Cek `sisa`."];
+    throw e;
+  }
+  const { period, sisaMakanPindah } = hasil;
   const daily = await getDailyStatus(db, now);
   const baris = [`Sip, periode ${fmtTanggal(period.tanggalMulai)}–${fmtTanggal(period.tanggalSelesai)} resmi jalan.`];
   if (sisaMakanPindah > 0) baris.push(`Sisa makan minggu lalu ${rp(sisaMakanPindah)} udah pindah ke Darurat.`);

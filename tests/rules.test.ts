@@ -114,7 +114,7 @@ describe("whitelist nomor", () => {
     expect(normalizePhone("08971688893")).toBe("628971688893");
   });
   it("hanya 2 nomor terdaftar yang lolos", () => {
-    const env = { OWNER_WA_NUMBERS: "6285163544535,628971688893" } as NodeJS.ProcessEnv;
+    const env = { OWNER_WA_NUMBERS: "6285163544535,628971688893" } as unknown as NodeJS.ProcessEnv;
     expect(ownerNumbers(env)).toEqual(["6285163544535", "628971688893"]);
     expect(isOwner("085163544535", env)).toBe(true);
     expect(isOwner("628971688893@s.whatsapp.net", env)).toBe(true);

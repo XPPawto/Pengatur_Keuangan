@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --fg: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --brand: #0f766e;
+  --brand-fg: #ffffff;
+  --ok: #15803d;
+  --ok-bg: #dcfce7;
+  --warn: #b45309;
+  --warn-bg: #fef3c7;
+  --bad: #b91c1c;
+  --bad-bg: #fee2e2;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1117;
+    --card: #141c25;
+    --fg: #e6edf3;
+    --muted: #8b9bab;
+    --line: #233140;
+    --brand: #2dd4bf;
+    --brand-fg: #042f2e;
+    --ok: #4ade80;
+    --ok-bg: #12301d;
+    --warn: #fbbf24;
+    --warn-bg: #352a0c;
+    --bad: #f87171;
+    --bad-bg: #3b1515;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-card: var(--card);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-brand: var(--brand);
+  --color-brand-fg: var(--brand-fg);
+  --color-ok: var(--ok);
+  --color-ok-bg: var(--ok-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-bad: var(--bad);
+  --color-bad-bg: var(--bad-bg);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-card p-4;
+  }
+  .input {
+    @apply w-full rounded-xl border border-line bg-bg px-3 py-2.5 text-base text-fg outline-none focus:border-brand;
+  }
+  .btn {
+    @apply inline-flex min-h-11 items-center justify-center rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-brand-fg active:opacity-80 disabled:opacity-50;
+  }
+  .btn-ghost {
+    @apply inline-flex min-h-11 items-center justify-center rounded-xl border border-line px-4 py-2 text-sm font-medium text-fg active:opacity-80;
+  }
+  .btn-danger {
+    @apply inline-flex min-h-11 items-center justify-center rounded-xl bg-bad-bg px-4 py-2 text-sm font-semibold text-bad active:opacity-80;
+  }
+  .label {
+    @apply mb-1 block text-sm font-medium text-muted;
+  }
+}

@@ -236,3 +236,13 @@ describe("keamanan", () => {
     expect((await saldo("kado")).saldo).toBe(105000);
   });
 });
+
+describe("sinkron bot ↔ website", () => {
+  it("usulan dari bot yang sudah dikonfirmasi di website: `ok` di WA tidak error", async () => {
+    await kirim("masuk 300", at("2026-10-04", 10));
+    const { confirmPeriod, getPendingPeriod } = await import("@/lib/services/periods");
+    await confirmPeriod(db, (await getPendingPeriod(db))!.id, at("2026-10-04", 10));
+    const [r] = await kirim("ok", at("2026-10-04", 11));
+    expect(r).toContain("udah dikonfirmasi");
+  });
+});

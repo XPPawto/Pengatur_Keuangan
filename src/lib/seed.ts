@@ -27,7 +27,7 @@ const KODE_URUT = ["makan", "data", "paylater", "kado", "darurat"] as const;
 const BELANJA = [
   { nama: "Beras SPHP Bulog", jumlah: 2, satuan: "kg", hargaSatuan: 12500, kataKunci: ["beras", "nasi"] },
   { nama: "Telur", jumlah: 0.5, satuan: "kg", hargaSatuan: 28000, kataKunci: ["telur", "telor"] },
-  { nama: "Mie instan", jumlah: 3, satuan: "bungkus", hargaSatuan: 3333, kataKunci: ["mie", "mi", "indomie", "mie instan"] },
+  { nama: "Mie instan", jumlah: 1, satuan: "paket isi 3", hargaSatuan: 10000, kataKunci: ["mie", "mi", "indomie", "mie instan"] },
   { nama: "Tempe", jumlah: 2, satuan: "papan", hargaSatuan: 5000, kataKunci: ["tempe"] },
   { nama: "Tahu", jumlah: 1, satuan: "bungkus", hargaSatuan: 5000, kataKunci: ["tahu"] },
   { nama: "Bumbu nasi goreng sachet", jumlah: 2, satuan: "sachet", hargaSatuan: 2500, kataKunci: ["bumbu", "nasgor", "bumbu nasi goreng"] },
