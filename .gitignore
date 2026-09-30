@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+*.tsbuildinfo
+next-env.d.ts
+
+# rahasia & data pribadi: JANGAN masuk repo
+.env
+.env.*
+!.env.example
+data/*
+!data/.gitkeep
+*.db
+*.db-journal
+wa-session/
+
+.DS_Store
