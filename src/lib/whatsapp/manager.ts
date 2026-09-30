@@ -52,6 +52,14 @@ export class WaManager {
     this.pingTimer = null;
   }
 
+  isConnected(): boolean {
+    return this.lastStatus === "terhubung";
+  }
+
+  async send(nomor: string, text: string) {
+    await this.driver.sendMessage(nomor, text);
+  }
+
   /** Detak supaya website tahu proses bot masih hidup. */
   async ping() {
     await this.db.waConnection.update({ where: { id: 1 }, data: { workerPing: new Date() } }).catch(() => {});

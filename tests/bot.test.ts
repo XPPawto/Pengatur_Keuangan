@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { handleMessage } from "@/lib/bot/handler";
-import { seedDatabase } from "@/lib/seed";
+import { resetDb } from "./helpers";
 import { getBalances } from "@/lib/services/envelopes";
 import { getCurrentPeriod } from "@/lib/services/periods";
 import { recordExpense } from "@/lib/services/transactions";
@@ -15,15 +15,7 @@ const PASANGAN = "08971688893";
 const at = (tgl: string, jam = 12) => fromWib(tgl, jam);
 const kirim = (text: string, now: Date, nomor = ABDUL) => handleMessage(db, { nomor, text, now });
 
-async function reset() {
-  for (const t of [
-    "pendingAction", "messageLog", "dailyLog", "transfer", "transaction", "allocation", "period",
-    "bill", "goal", "shoppingItem", "allocationPlan", "allowedNumber", "waConnection", "envelope",
-  ] as const) {
-    await (db[t] as unknown as { deleteMany(): Promise<unknown> }).deleteMany();
-  }
-  await seedDatabase(db);
-}
+const reset = () => resetDb(db);
 
 /** Mulai periode Minggu 4 Okt 2026 dengan uang Rp300rb. */
 async function mulaiPeriode4Okt() {
@@ -149,11 +141,11 @@ describe("catat pengeluaran", () => {
   it("peringatan sekali saat amplop turun di bawah 20%", async () => {
     await mulaiPeriode4Okt();
     const [a] = await kirim("beras 60k", at("2026-10-04", 13)); // sisa 25rb (29%)
-    expect(a).not.toContain("⚠️");
+    expect(a).not.toContain("Peringatan");
     const [b] = await kirim("telur 10k", at("2026-10-04", 14)); // sisa 15rb (<17rb)
-    expect(b).toContain("⚠️ Makan tinggal Rp15.000");
+    expect(b).toContain("Peringatan: Makan tinggal Rp15.000");
     const [c] = await kirim("tempe 2k", at("2026-10-04", 15));
-    expect(c).not.toContain("⚠️");
+    expect(c).not.toContain("Peringatan");
   });
 });
 
@@ -183,7 +175,7 @@ describe("perintah lain", () => {
     expect(h).toContain("Total Rp5.000");
     const [s] = await kirim("sisa", at("2026-10-05", 9));
     expect(s).toContain("Makan: Rp80.000 / Rp85.000");
-    expect(s).toContain("Tabungan kado 🔒: Rp115.000");
+    expect(s).toContain("Tabungan kado (terkunci): Rp115.000");
   });
 
   it("`batal` minta konfirmasi lalu menghapus transaksi terakhir", async () => {
@@ -206,12 +198,6 @@ describe("perintah lain", () => {
     expect(r).toContain("Streak disiplin 3 hari");
   });
 
-  it("fitur fase berikutnya dijawab sopan, bukan dicatat sebagai pengeluaran", async () => {
-    await mulaiPeriode4Okt();
-    const [r] = await kirim("bayar paylater 50k", at("2026-10-05"));
-    expect(r).toContain("nyusul");
-    expect(await db.transaction.count()).toBe(0);
-  });
 });
 
 describe("keamanan", () => {

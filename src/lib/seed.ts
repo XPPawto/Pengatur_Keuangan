@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { normalizePhone, ownerNumbers } from "./whitelist";
+import { PENGINGAT } from "./services/scheduler";
 
 /** Data awal dari PRD (bagian "Data awal"). Aman dijalankan berulang: amplop/rencana di-upsert, sisanya hanya diisi kalau kosong. */
 const AMPLOP = [
@@ -36,6 +37,28 @@ const BELANJA = [
   { nama: "Lauk rotasi", jumlah: 1, satuan: "paket", hargaSatuan: 9000, kataKunci: ["teri", "ikan asin", "ayam", "sarden", "lauk", "ikan"] },
   { nama: "Galon/air isi ulang", jumlah: 0, satuan: "galon", hargaSatuan: 6000, kataKunci: ["galon", "air"] },
 ];
+
+const MENU: [number, string, string][] = [
+  [0, "pagi", "Nasi goreng telur"], [0, "siang", "Nasi + orek tempe"], [0, "malam", "Mie goreng + telur ceplok"],
+  [1, "pagi", "Nasi + telur dadar"], [1, "siang", "Nasi + tahu kecap"], [1, "malam", "Nasi + lauk rotasi"],
+  [2, "pagi", "Nasi goreng"], [2, "siang", "Nasi + tempe goreng"], [2, "malam", "Mie rebus + telur"],
+  [3, "pagi", "Nasi + telur balado"], [3, "siang", "Nasi + orek tempe"], [3, "malam", "Nasi + lauk rotasi"],
+  [4, "pagi", "Nasi goreng telur"], [4, "siang", "Nasi + tahu goreng kecap"], [4, "malam", "Mie goreng"],
+  [5, "pagi", "Nasi + telur ceplok"], [5, "siang", "Nasi + lauk rotasi"], [5, "malam", "Nasi + tempe tahu bacem"],
+  [6, "pagi", "Nasi goreng tempe"], [6, "siang", "Nasi + telur dadar"], [6, "malam", "Nasi + sisa lauk"],
+];
+const WAKTU_URUT: Record<string, number> = { pagi: 0, siang: 1, malam: 2 };
+
+const LAUK = [
+  { mingguKe: 1, nama: "Teri / ikan asin", jumlah: "±100 g", estimasi: 9000 },
+  { mingguKe: 2, nama: "Ayam", jumlah: "¼ kg", estimasi: 9000 },
+  { mingguKe: 3, nama: "Sarden kaleng kecil", jumlah: "1 kaleng", estimasi: 9000 },
+  { mingguKe: 4, nama: "Telur tambahan", jumlah: "¼ kg", estimasi: 7000 },
+];
+
+function familyNumbers(env: NodeJS.ProcessEnv): string[] {
+  return (env.FAMILY_WA_NUMBERS ?? "").split(",").map((n) => normalizePhone(n.trim())).filter(Boolean);
+}
 
 export async function seedDatabase(db: PrismaClient, env: NodeJS.ProcessEnv = process.env) {
   for (const e of AMPLOP) {
@@ -82,6 +105,23 @@ export async function seedDatabase(db: PrismaClient, env: NodeJS.ProcessEnv = pr
   for (const n of nomor) {
     await db.allowedNumber.upsert({ where: { nomor: n }, update: {}, create: { nomor: n, label: `Nomor ${n.slice(-4)}` } });
   }
+
+  for (const n of familyNumbers(env)) {
+    await db.allowedNumber.upsert({
+      where: { nomor: n },
+      update: {},
+      create: { nomor: n, label: "Orang tua", peran: "keluarga", terimaPengingat: false, terimaLaporan: true, terimaKonfirmasiUang: true },
+    });
+  }
+
+  for (const p of PENGINGAT) {
+    await db.reminderSetting.upsert({ where: { jenis: p.jenis }, update: {}, create: { jenis: p.jenis, jam: p.jam, aktif: true } });
+  }
+
+  if ((await db.menuItem.count()) === 0) {
+    await db.menuItem.createMany({ data: MENU.map(([hari, waktu, menu]) => ({ hari, waktu, menu, urutan: WAKTU_URUT[waktu] })) });
+  }
+  for (const l of LAUK) await db.laukRotasi.upsert({ where: { mingguKe: l.mingguKe }, update: {}, create: l });
 
   await db.waConnection.upsert({ where: { id: 1 }, update: {}, create: { id: 1, status: "terputus" } });
 }
