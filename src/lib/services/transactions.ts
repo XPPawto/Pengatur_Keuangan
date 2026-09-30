@@ -13,6 +13,8 @@ export interface RecordInput {
   sumber: Sumber;
   pesanAsli?: string;
   now: Date;
+  /** tanggal WIB transaksi kalau bukan hari ini (mis. `kemarin tempe 5k`); harus di dalam periode aktif */
+  tanggal?: string;
   /** wajib diisi "YAKIN AMBIL TABUNGAN" untuk amplop terkunci */
   konfirmasiBukaKunci?: string;
 }
@@ -38,6 +40,11 @@ export async function recordExpense(db: Db, input: RecordInput): Promise<RecordR
     throw new AppError("locked", `${env.nama} terkunci. Ketik "${KATA_BUKA_KUNCI}" buat lanjut.`);
   }
 
+  const tanggal = input.tanggal ?? wibDate(input.now);
+  if (input.tanggal && (tanggal < period.tanggalMulai || tanggal > wibDate(input.now))) {
+    throw new AppError("invalid", "Tanggal itu di luar periode aktif. Catat lewat website kalau perlu.");
+  }
+
   const before = (await getBalances(db, period.id)).find((b) => b.kode === input.kode)!;
   const tx = await db.transaction.create({
     data: {
@@ -48,7 +55,7 @@ export async function recordExpense(db: Db, input: RecordInput): Promise<RecordR
       catatan: (input.catatan ?? "").trim(),
       sumber: input.sumber,
       pesanAsli: input.pesanAsli,
-      tanggal: wibDate(input.now),
+      tanggal,
       dibuatPada: input.now,
     },
   });

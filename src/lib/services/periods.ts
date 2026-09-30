@@ -155,3 +155,43 @@ export function hariSisaPeriode(period: { tanggalMulai: string; tanggalSelesai: 
   const from = today < period.tanggalMulai ? period.tanggalMulai : today;
   return diffDays(from, period.tanggalSelesai) + 1;
 }
+
+/** Ubah alokasi satu amplop di periode tertentu (koreksi manual dari website). */
+export async function setAllocation(db: Db, periodId: number, kode: EnvelopeKode, nominal: number) {
+  if (!Number.isInteger(nominal) || nominal < 0) throw new AppError("invalid", "Nominal alokasi tidak valid.");
+  const env = await db.envelope.findUnique({ where: { kode } });
+  if (!env) throw new AppError("not_found", "Amplop tidak ditemukan.");
+  await db.allocation.upsert({
+    where: { periodId_envelopeId: { periodId, envelopeId: env.id } },
+    update: { nominal },
+    create: { periodId, envelopeId: env.id, nominal },
+  });
+  const all = await db.allocation.findMany({ where: { periodId } });
+  const period = await db.period.findUniqueOrThrow({ where: { id: periodId } });
+  return { totalAlokasi: all.reduce((s, a) => s + a.nominal, 0), pemasukan: period.pemasukan };
+}
+
+export async function listPlans(db: Db) {
+  const rows = await db.allocationPlan.findMany({ include: { envelope: true }, orderBy: { tanggalMulai: "asc" } });
+  const byDate = new Map<string, Alloc>();
+  for (const r of rows) {
+    const a = byDate.get(r.tanggalMulai) ?? (Object.fromEntries(ENVELOPE_KODE.map((k) => [k, 0])) as Alloc);
+    a[r.envelope.kode as EnvelopeKode] = r.nominal;
+    byDate.set(r.tanggalMulai, a);
+  }
+  return [...byDate.entries()].map(([tanggalMulai, alloc]) => ({ tanggalMulai, alloc }));
+}
+
+export async function setPlan(db: Db, tanggalMulai: string, alloc: Partial<Alloc>) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggalMulai)) throw new AppError("invalid", "Tanggal tidak valid.");
+  const envs = await db.envelope.findMany();
+  for (const [kode, nominal] of Object.entries(alloc) as [EnvelopeKode, number][]) {
+    const env = envs.find((e) => e.kode === kode);
+    if (!env || !Number.isInteger(nominal) || nominal < 0) continue;
+    await db.allocationPlan.upsert({
+      where: { tanggalMulai_envelopeId: { tanggalMulai, envelopeId: env.id } },
+      update: { nominal },
+      create: { tanggalMulai, envelopeId: env.id, nominal },
+    });
+  }
+}

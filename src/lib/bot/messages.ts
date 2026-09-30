@@ -13,26 +13,42 @@ export const NAMA_PENDEK: Record<EnvelopeKode, string> = {
   darurat: "Darurat",
 };
 
-export const BANTUAN = `*DompetKos — perintah*
-• \`tempe 5k\` / \`beli telur 14rb\` → catat pengeluaran (boleh banyak: \`tempe 5k sama telur 14k\`)
-• \`masuk 300\` → uang mingguan masuk, mulai periode baru
-• \`sisa\` → sisa semua amplop + jatah makan
-• \`hari ini\` → transaksi hari ini
-• \`batal\` → hapus catatan terakhir
-• \`nol\` / \`gak jajan\` → tandai hari ini nggak jajan
-• \`bantuan\` → pesan ini
+export const BANTUAN = `*DompetKos — daftar perintah*
 
-Nominal bebas: 12k, 12rb, 12 ribu, 12.000, 12000, 1,5jt.
-Fitur lain (tagihan, target, belanja, tahan belanja) nyusul di fase berikutnya.`;
+*Catat*
+• \`tempe 5k\` · \`beli telur 14rb\` · \`tempe 5k sama telur 14k\`
+• \`kemarin tempe 5k\` — catat buat kemarin
+• \`nol\` / \`gak jajan\` — hari ini nggak jajan
+• \`batal\` — hapus catatan terakhir
+• \`ubah 12k\` — ganti nominal catatan terakhir
 
-export const BELUM_ADA_FITUR = "Fitur itu belum ada, nyusul di fase berikutnya. Ketik `bantuan` buat lihat yang udah jalan.";
+*Cek*
+• \`sisa\` — semua amplop + jatah makan
+• \`jatah\` — jatah makan hari ini
+• \`hari ini\` — transaksi hari ini
+• \`rekap\` — ringkasan minggu ini
+• \`target\` — progres tabungan kado
+• \`tagihan\` — tagihan yang belum lunas
+
+*Uang*
+• \`masuk 300\` — uang mingguan masuk
+• \`bayar paylater 50k\` — bayar & tandai lunas
+• \`pindah 10k darurat ke makan alasan ...\`
+• \`mau beli sepatu 150k\` — cek dampak dulu sebelum beli
+
+*Masak*
+• \`belanja\` — daftar belanja minggu ini
+• \`menu\` — menu hari ini + lauk rotasi
+
+Nominal bebas: 12k, 12rb, 12 ribu, 12.000, 1,5jt.`;
+
 export const TAK_PAHAM = "Gw belum ngerti maksudnya. Coba `tempe 5k`, `sisa`, atau `bantuan`.";
 export const BELUM_ADA_PERIODE = "Belum ada periode aktif. Balas `masuk 300` dulu ya.";
 
 export function ringkasAmplop(balances: EnvelopeBalance[]): string {
   return balances
     .map((b) => {
-      const tag = b.terkunci ? " 🔒" : "";
+      const tag = b.terkunci ? " (terkunci)" : "";
       if (b.kumulatif) return `${NAMA_PENDEK[b.kode]}${tag}: ${rp(b.saldo)}`;
       return `${NAMA_PENDEK[b.kode]}: ${rp(b.saldo)} / ${rp(b.alokasi)}`;
     })
@@ -65,7 +81,7 @@ export function usulanPeriode(p: { tanggalMulai: string; tanggalSelesai: string;
     if (r.kadoBerkurang > 0) baris.push(`Dampak: target kado mundur ${rp(r.kadoBerkurang)}.`);
   }
   if (r.kurangTersisa > 0) {
-    baris.push(`⚠️ Masih kurang ${rp(r.kurangTersisa)} dan Makan/Data nggak gw potong otomatis. Atur manual di website ya.`);
+    baris.push(`Perhatian: masih kurang ${rp(r.kurangTersisa)} dan Makan/Data nggak gw potong otomatis. Atur manual di website ya.`);
   }
   if (r.lebih > 0) baris.push(`Ada lebih ${rp(r.lebih)} dari rencana, gw bagi 50% kado, 50% darurat.`);
   baris.push(`Balas "ok" kalau udah dipisahin ke e-wallet tabungan. "batal" buat batalin.`);
@@ -78,4 +94,8 @@ export function hariIniList(tanggal: string, rows: { nominal: number; catatan: s
   const total = rows.reduce((s, r) => s + r.nominal, 0);
   const isi = rows.map((r) => `• ${r.catatan || "(tanpa catatan)"} ${rp(r.nominal)} [${NAMA_PENDEK[r.envelope.kode as EnvelopeKode] ?? r.envelope.kode}]`);
   return [`${judul}:`, ...isi, `Total ${rp(total)}.`].join("\n");
+}
+
+export function pilihanBernomor(kodes: EnvelopeKode[]): string {
+  return kodes.map((k, i) => `${i + 1}. ${NAMA_PENDEK[k]}`).join("\n");
 }

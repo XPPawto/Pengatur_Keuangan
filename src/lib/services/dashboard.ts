@@ -2,22 +2,26 @@ import type { Db } from "../db";
 import { diffDays, wibDate } from "../time";
 import { getDailyStatus, getStreak } from "./daily";
 import { getBalances } from "./envelopes";
+import { getGoalProgress } from "./goals";
+import { savedTotal } from "./holds";
 import { getCurrentPeriod, getPendingPeriod, getPeriodAllocations } from "./periods";
+import { listTransactions } from "./transactions";
 
 export async function getDashboard(db: Db, now: Date) {
   const hariIni = wibDate(now);
   const [period, pending] = await Promise.all([getCurrentPeriod(db), getPendingPeriod(db)]);
-  const [daily, balances, streak, bill, billPaylater, goal, pendingAlloc] = await Promise.all([
+  const [daily, balances, streak, bills, billPaylater, goal, pendingAlloc, hemat, txHariIni, holdsMenunggu] = await Promise.all([
     getDailyStatus(db, now),
     getBalances(db, period?.id ?? null),
     getStreak(db, now),
-    db.bill.findFirst({ where: { status: "belum" }, orderBy: { jatuhTempo: "asc" }, include: { envelope: true } }),
+    db.bill.findMany({ where: { status: "belum" }, orderBy: { jatuhTempo: "asc" }, include: { envelope: true }, take: 3 }),
     db.bill.findFirst({ where: { status: "belum", envelope: { kode: "paylater" } }, orderBy: { jatuhTempo: "asc" } }),
-    db.goal.findFirst({ include: { envelope: true } }),
+    getGoalProgress(db, now),
     pending ? getPeriodAllocations(db, pending.id) : Promise.resolve(null),
+    savedTotal(db),
+    listTransactions(db, { tanggal: hariIni, limit: 6 }),
+    db.holdRequest.count({ where: { hasil: "menunggu" } }),
   ]);
-
-  const saldoKado = goal ? (balances.find((b) => b.id === goal.envelopeId)?.saldo ?? 0) : 0;
 
   return {
     hariIni,
@@ -27,7 +31,10 @@ export async function getDashboard(db: Db, now: Date) {
     balances,
     streak,
     billPaylater,
-    bill: bill ? { ...bill, hariLagi: diffDays(hariIni, bill.jatuhTempo) } : null,
-    goal: goal ? { ...goal, saldo: saldoKado, hariLagi: diffDays(hariIni, goal.tenggat) } : null,
+    bills: bills.map((b) => ({ ...b, hariLagi: diffDays(hariIni, b.jatuhTempo) })),
+    goal,
+    hemat,
+    txHariIni,
+    holdsMenunggu,
   };
 }

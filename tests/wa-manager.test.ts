@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { GatewayDriver, GatewayState, IncomingWaMessage, WaMode } from "@/lib/whatsapp/gateway";
 import { WaManager } from "@/lib/whatsapp/manager";
-import { seedDatabase } from "@/lib/seed";
+import { resetDb } from "./helpers";
 
 const db = new PrismaClient();
 
@@ -25,12 +25,7 @@ class FakeDriver implements GatewayDriver {
   async receive(nomor: string, text: string) { await this.msgH({ nomor, text, waktu: new Date() }); }
 }
 
-async function reset() {
-  for (const t of ["waCommand", "waConnectionLog", "waConnection", "pendingAction", "messageLog", "dailyLog", "transaction", "allocation", "period", "allocationPlan", "bill", "goal", "shoppingItem", "allowedNumber", "envelope"] as const) {
-    await (db[t] as unknown as { deleteMany(): Promise<unknown> }).deleteMany();
-  }
-  await seedDatabase(db);
-}
+const reset = () => resetDb(db);
 
 const tunggu = () => new Promise((r) => setTimeout(r, 50));
 const status = () => db.waConnection.findUniqueOrThrow({ where: { id: 1 } });

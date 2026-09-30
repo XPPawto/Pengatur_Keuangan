@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Icon } from "./icons";
+import { Alert } from "./ui";
 
 interface Status {
   status: "terhubung" | "terputus" | "menunggu_pairing";
@@ -67,20 +69,24 @@ export default function WaPanel() {
   return (
     <div className="space-y-4">
       {!s.botHidup && (
-        <p role="alert" className="rounded-xl bg-bad-bg px-3 py-2 text-sm text-bad">
-          Proses bot belum jalan, jadi tombol di bawah belum akan direspon. Jalankan <code>npm run dev</code> (atau <code>npm run start:bot</code>).
-        </p>
+        <Alert tone="bad">
+          Proses bot belum berjalan, jadi tombol di bawah belum direspons. Jalankan <code>npm run dev</code> atau <code>npm start</code>.
+        </Alert>
       )}
       {s.nomorBotSamaDenganPenerima && (
-        <p role="alert" className="rounded-xl bg-warn-bg px-3 py-2 text-sm text-warn">
-          Nomor bot sama dengan salah satu nomor penerima. Pakai nomor cadangan supaya nomor utama aman kalau diblokir WhatsApp.
-        </p>
+        <Alert tone="warn">Nomor bot sama dengan salah satu nomor penerima. Pakai nomor cadangan supaya nomor utama aman kalau diblokir WhatsApp.</Alert>
       )}
 
-      <section className="card space-y-3" aria-live="polite">
+      <section className="card card-pad space-y-3" aria-live="polite">
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold">Status</h2>
-          <span className={`rounded-full px-3 py-1 text-sm font-semibold ${WARNA[s.status]}`}>{LABEL[s.status]}</span>
+          <h2 className="flex items-center gap-2 font-semibold">
+            <Icon name="message" size={18} className="text-muted" />
+            Status koneksi
+          </h2>
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold ${WARNA[s.status]}`}>
+            <span className={`size-2 rounded-full bg-current ${s.status === "menunggu_pairing" ? "animate-pulse" : ""}`} />
+            {LABEL[s.status]}
+          </span>
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
           <dt className="text-muted">Nomor bot</dt>
@@ -97,7 +103,7 @@ export default function WaPanel() {
       </section>
 
       {s.status === "menunggu_pairing" && (s.qrDataUrl || s.pairingCode) && (
-        <section className="card space-y-3 text-center">
+        <section className="card card-pad space-y-3 text-center">
           {s.qrDataUrl && (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -113,16 +119,21 @@ export default function WaPanel() {
           )}
         </section>
       )}
-      {s.status === "menunggu_pairing" && !s.qrDataUrl && !s.pairingCode && <p className="card text-center text-sm text-muted">Menyiapkan QR / kode…</p>}
+      {s.status === "menunggu_pairing" && !s.qrDataUrl && !s.pairingCode && <p className="card card-pad flex items-center justify-center gap-2 text-sm text-muted"><Icon name="refresh" size={16} className="animate-spin" />Menyiapkan QR / kode… (maks. 30 detik)</p>}
 
       {s.status !== "terhubung" && (
-        <section className="card space-y-3">
-          <h2 className="font-semibold">Hubungkan</h2>
+        <section className="card card-pad space-y-3">
+          <h2 className="flex items-center gap-2 font-semibold">
+            <Icon name="link" size={18} className="text-muted" />
+            Hubungkan
+          </h2>
           <div className="flex flex-col gap-2 sm:flex-row">
             <button className="btn flex-1" disabled={sibuk} onClick={() => { setMode("qr"); void kirim("/api/wa/connect", { mode: "qr" }); }}>
+              <Icon name="qr" size={18} />
               Hubungkan lewat QR
             </button>
-            <button className="btn-ghost flex-1" onClick={() => setMode(mode === "code" ? null : "code")}>
+            <button className="btn-secondary flex-1" onClick={() => setMode(mode === "code" ? null : "code")}>
+              <Icon name="key" size={18} />
               Pakai kode pairing
             </button>
           </div>
@@ -147,11 +158,15 @@ export default function WaPanel() {
       )}
 
       {s.status === "terhubung" && (
-        <section className="card space-y-3">
-          <h2 className="font-semibold">Putuskan</h2>
+        <section className="card card-pad space-y-3">
+          <h2 className="flex items-center gap-2 font-semibold">
+            <Icon name="link-off" size={18} className="text-muted" />
+            Putuskan
+          </h2>
           <p className="text-sm text-muted">Sesi di server dihapus dan perangkat tertaut dilepas dari WhatsApp. Buat nyambung lagi harus pairing ulang.</p>
           {!konfirmasiPutus ? (
             <button className="btn-danger w-full" onClick={() => setKonfirmasiPutus(true)}>
+              <Icon name="link-off" size={17} />
               Putuskan
             </button>
           ) : (
@@ -159,7 +174,7 @@ export default function WaPanel() {
               <button className="btn-danger flex-1" disabled={sibuk} onClick={async () => { await kirim("/api/wa/logout"); setKonfirmasiPutus(false); }}>
                 Ya, putuskan
               </button>
-              <button className="btn-ghost" onClick={() => setKonfirmasiPutus(false)}>
+              <button className="btn-secondary" onClick={() => setKonfirmasiPutus(false)}>
                 Batal
               </button>
             </div>
@@ -167,14 +182,13 @@ export default function WaPanel() {
         </section>
       )}
 
-      {galat && (
-        <p role="alert" className="rounded-xl bg-bad-bg px-3 py-2 text-sm text-bad">
-          {galat}
-        </p>
-      )}
+      {galat && <Alert tone="bad">{galat}</Alert>}
 
-      <section className="card">
-        <h2 className="mb-2 font-semibold">Riwayat koneksi</h2>
+      <section className="card card-pad">
+        <h2 className="mb-2 flex items-center gap-2 font-semibold">
+          <Icon name="clock" size={18} className="text-muted" />
+          Riwayat koneksi
+        </h2>
         {s.riwayat.length === 0 ? (
           <p className="text-sm text-muted">Belum ada.</p>
         ) : (

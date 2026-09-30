@@ -1,5 +1,6 @@
 import type { Db } from "../db";
-import type { EnvelopeJenis, EnvelopeKode } from "../types";
+import { KATA_BUKA_KUNCI, type EnvelopeJenis, type EnvelopeKode } from "../types";
+import { AppError } from "./errors";
 
 export interface EnvelopeBalance {
   id: number;
@@ -56,4 +57,21 @@ export async function getBalances(db: Db, periodId: number | null): Promise<Enve
       kumulatif,
     };
   });
+}
+
+export async function updateEnvelopeSettings(
+  db: Db,
+  kode: EnvelopeKode,
+  d: { nama?: string; defaultNominal?: number; urutanPotong?: number | null; terkunci?: boolean },
+  konfirmasiBukaKunci?: string,
+) {
+  const env = await db.envelope.findUnique({ where: { kode } });
+  if (!env) throw new AppError("not_found", "Amplop tidak ditemukan.");
+  if (env.terkunci && d.terkunci === false && konfirmasiBukaKunci?.trim().toUpperCase() !== KATA_BUKA_KUNCI) {
+    throw new AppError("locked", `Buka kunci ${env.nama}: ketik "${KATA_BUKA_KUNCI}".`);
+  }
+  if (d.defaultNominal !== undefined && (!Number.isInteger(d.defaultNominal) || d.defaultNominal < 0)) {
+    throw new AppError("invalid", "Nominal default tidak valid.");
+  }
+  return db.envelope.update({ where: { kode }, data: d });
 }

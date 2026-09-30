@@ -137,14 +137,18 @@ model ShoppingItem {
   urutan      Int     @default(0)
 }
 
-// Mode tahan belanja (Fase 3). hasil: beli | batal | menunggu
+// Mode tahan belanja. hasil: menunggu | beli | batal
 model HoldRequest {
-  id            Int       @id @default(autoincrement())
-  barang        String
-  nominal       Int
-  dibuatPada    DateTime  @default(now())
+  id             Int       @id @default(autoincrement())
+  barang         String
+  nominal        Int
+  envelopeKode   String    @default("darurat")
+  nomor          String? // nomor WA yang minta (null = dari website)
+  dibuatPada     DateTime  @default(now())
   tanyaUlangPada DateTime
-  hasil         String    @default("menunggu")
+  sudahDitanya   Boolean   @default(false)
+  hasil          String    @default("menunggu")
+  diputuskanPada DateTime?
 }
 
 model DailyLog {
@@ -155,27 +159,96 @@ model DailyLog {
   totalMakan   Int     @default(0)
 }
 
-// Pengingat terjadwal (Fase 2).
+// Pengingat terjadwal. jenis: uang_masuk | pagi | malam | tagihan | rekap | laporan_keluarga
 model ReminderSetting {
   jenis String  @id
-  jam   String
+  jam   String // "HH:MM" WIB
   aktif Boolean @default(true)
 }
 
 // arah: masuk | keluar
 model MessageLog {
-  id    Int      @id @default(autoincrement())
-  arah  String
-  nomor String
-  isi   String
-  waktu DateTime @default(now())
+  id       Int      @id @default(autoincrement())
+  arah     String
+  nomor    String
+  isi      String
+  proaktif Boolean  @default(false)
+  waktu    DateTime @default(now())
+
+  @@index([nomor, waktu])
 }
 
+// Nomor yang boleh berinteraksi dengan bot. peran: pemilik (catat & kelola) | keluarga (hanya terima laporan)
 model AllowedNumber {
-  id            Int     @id @default(autoincrement())
-  nomor         String  @unique
-  label         String
-  terimaPengingat Boolean @default(true)
+  id                   Int     @id @default(autoincrement())
+  nomor                String  @unique
+  label                String
+  peran                String  @default("pemilik")
+  terimaPengingat      Boolean @default(true)
+  terimaLaporan        Boolean @default(true)
+  terimaKonfirmasiUang Boolean @default(false)
+  aktif                Boolean @default(true)
+}
+
+// Antrean pesan keluar yang tidak diminta (pengingat, laporan, OTP). Dikirim oleh bot worker
+// dengan aturan jam tenang 22.00–06.00 dan maksimal 1 pesan per jam per nomor.
+// status: antri | terkirim | batal | gagal
+model Outbox {
+  id           Int       @id @default(autoincrement())
+  nomor        String
+  jenis        String
+  isi          String
+  kunci        String?   @unique // mencegah pesan dobel, mis. "pagi:2026-10-05:6285..."
+  dijadwalkan  DateTime
+  status       String    @default("antri")
+  percobaan    Int       @default(0)
+  catatan      String?
+  terkirimPada DateTime?
+  dibuatPada   DateTime  @default(now())
+
+  @@index([status, dijadwalkan])
+}
+
+// Pengaturan umum (key-value).
+model Setting {
+  kunci String @id
+  nilai String
+}
+
+// Contoh menu 7 hari. hari: 0 = Minggu ... 6 = Sabtu. waktu: pagi | siang | malam
+model MenuItem {
+  id     Int    @id @default(autoincrement())
+  hari   Int
+  waktu  String
+  menu   String
+  urutan Int    @default(0)
+}
+
+// Lauk rotasi 4 minggu.
+model LaukRotasi {
+  mingguKe   Int    @id
+  nama       String
+  jumlah     String
+  estimasi   Int
+}
+
+// Centang daftar belanja per minggu (mingguMulai = tanggal Minggu).
+model ShoppingCheck {
+  id          Int     @id @default(autoincrement())
+  mingguMulai String
+  itemId      Int
+  dibeli      Boolean @default(true)
+
+  @@unique([mingguMulai, itemId])
+}
+
+// Kode login sekali pakai yang dikirim lewat WhatsApp.
+model LoginCode {
+  id          Int      @id @default(autoincrement())
+  kodeHash    String
+  kedaluwarsa DateTime
+  dipakai     Boolean  @default(false)
+  dibuatPada  DateTime @default(now())
 }
 
 // Satu baris (id = 1). status: terhubung | terputus | menunggu_pairing
