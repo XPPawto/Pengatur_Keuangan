@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Db } from "../db";
 import { jenisGambar, MAKS_GAMBAR } from "../keamanan/gambar";
-import { fromWib, wibDate } from "../time";
+import { wibDate } from "../time";
 import { getSetting, getSettingNumber, setSetting } from "../services/settings";
 import { ownerNumbers } from "../whitelist";
 import type { IncomingWaMessage } from "../whatsapp/gateway";
@@ -70,6 +70,16 @@ export function pertanyaanIdentitas(teks: string): boolean {
   const t = teks.toLowerCase().replace(/[?!.,]+/g, " ").replace(/\s+/g, " ").trim();
   return t.length > 0 && t.length <= 40 && RE_IDENTITAS.some((r) => r.test(t));
 }
+
+/** Tambahan instruksi untuk tahap penggabungan jawaban dari beberapa penyedia. */
+export const SYSTEM_EDITOR = [
+  "",
+  "PERAN SEKARANG: editor jawaban. Di bawah ada beberapa draf jawaban (dari asisten AI berbeda) untuk pesan baru dari penanya. Tugasmu menulis SATU jawaban final terbaik.",
+  "- Ambil isi yang paling benar, jelas, dan berguna dari semua draf; gabungkan yang saling melengkapi; buang pengulangan.",
+  "- Kalau draf saling bertentangan soal fakta, pilih yang paling bisa dipertanggungjawabkan; kalau tidak bisa dipastikan, katakan tidak yakin. Jangan menambah fakta, angka, atau tautan baru yang tidak ada di draf.",
+  "- Ikuti semua aturan gaya dan kejujuran di atas (bahasa penanya, ringkas, format WhatsApp).",
+  "- Jangan menyebut \"draf\", \"jawaban A/B/C\", atau bahwa ada beberapa asisten. Tulis langsung jawabannya.",
+].join("\n");
 
 const BANTUAN_RE = /^(bantuan|help|menu|fitur|\?)$/i;
 export const BANTUAN = [
@@ -199,9 +209,15 @@ async function giliranBerikut(db: Db): Promise<number> {
 
 // ---------------------------------------------------------------- perintah pemilik
 
-async function pemakaianGrupHariIni(db: Db, now: Date): Promise<number> {
-  return db.aiCall.count({ where: { waktu: { gte: fromWib(wibDate(now)) }, fitur: "chat_grup", utama: true } });
+/** Jawaban AI grup hari ini (satu per pertanyaan, walau dijawab beberapa penyedia sekaligus). */
+export async function jawabanGrupHariIni(db: Db, now: Date): Promise<number> {
+  const [tgl, n] = (await getSetting(db, "grup_ai_hitung")).split(":");
+  return tgl === wibDate(now) ? Number(n) || 0 : 0;
 }
+async function catatJawabanGrup(db: Db, now: Date) {
+  await setSetting(db, "grup_ai_hitung", `${wibDate(now)}:${(await jawabanGrupHariIni(db, now)) + 1}`);
+}
+const pemakaianGrupHariIni = jawabanGrupHariIni;
 
 async function perintahGrup(db: Db, jidIni: string, jidAktif: string, arg: string, now: Date): Promise<string | null> {
   const [kata, ...sisa] = arg.toLowerCase().split(/\s+/);
@@ -211,6 +227,7 @@ async function perintahGrup(db: Db, jidIni: string, jidAktif: string, arg: strin
     await setSetting(db, "grup_ai_aktif", "1");
     const tersedia = await penyediaTersedia(db);
     const mode = await getSetting(db, "grup_ai_mode");
+    const strategi = await getSetting(db, "grup_ai_strategi");
     return [
       "*AI grup aktif* di grup ini 🤖",
       mode === "semua"
@@ -218,14 +235,24 @@ async function perintahGrup(db: Db, jidIni: string, jidAktif: string, arg: strin
         : mode === "pertanyaan"
           ? "Aku jawab pesan berawalan */ai*, pesan berbentuk pertanyaan, atau kalau aku di-mention / balas pesanku."
           : "Tanya aku dengan awalan */ai*, contoh: `/ai apa itu fotosintesis?` (atau balas pesanku buat lanjut ngobrol).",
-      tersedia.length ? `Penyedia bergiliran: ${tersedia.map((p) => LABEL_PENYEDIA[p]).join(" → ")}.` : "⚠️ Belum ada penyedia AI yang tersambung (atur di website → Koneksi).",
-      "Perintah pemilik: `!aigrup status` · `!aigrup mati` · `!aigrup mode perintah|pertanyaan|semua` · `!aigrup reset`",
+      tersedia.length
+        ? strategi === "giliran"
+          ? `Penyedia bergiliran: ${tersedia.map((p) => LABEL_PENYEDIA[p]).join(" → ")}.`
+          : `Tiap pertanyaan dijawab bersama oleh ${tersedia.map((p) => LABEL_PENYEDIA[p]).join(" + ")}, lalu digabung jadi satu jawaban terbaik.`
+        : "⚠️ Belum ada penyedia AI yang tersambung (atur di website → Koneksi).",
+      "Perintah pemilik: `!aigrup status` · `mati` · `mode perintah|pertanyaan|semua` · `strategi gabung|giliran` · `reset`",
     ].join("\n");
   }
   if (!aktifDiIni) return null; // perintah lain hanya berlaku di grup yang sedang dipilih
   if (kata === "mati" || kata === "off") {
     await setSetting(db, "grup_ai_aktif", "0");
     return "AI grup dimatikan. Ketik `!aigrup aktif` untuk menyalakan lagi.";
+  }
+  if (kata === "strategi" || kata === "cara") {
+    const m = sisa[0];
+    if (m !== "gabung" && m !== "giliran") return "Pakai: `!aigrup strategi gabung` (semua penyedia dijawab sekaligus lalu digabung) atau `!aigrup strategi giliran` (bergantian, hemat kuota).";
+    await setSetting(db, "grup_ai_strategi", m);
+    return m === "gabung" ? "Oke, tiap pertanyaan sekarang dijawab bersama oleh semua penyedia lalu digabung jadi satu jawaban terbaik." : "Oke, sekarang penyedia bergiliran: satu penyedia per pertanyaan.";
   }
   if (kata === "mode") {
     const m = sisa[0];
@@ -238,25 +265,106 @@ async function perintahGrup(db: Db, jidIni: string, jidAktif: string, arg: strin
     return "Ingatan percakapan grup dihapus.";
   }
   if (kata === "status" || !kata) {
-    const [aktif, mode, batas, tersedia, pakai, modelC] = await Promise.all([
+    const [aktif, mode, batas, tersedia, pakai, modelC, strategiC] = await Promise.all([
       getSetting(db, "grup_ai_aktif"),
       getSetting(db, "grup_ai_mode"),
       getSettingNumber(db, "grup_ai_batas_harian"),
       penyediaTersedia(db),
       pemakaianGrupHariIni(db, now),
       getSetting(db, "grup_ai_model_claude"),
+      getSetting(db, "grup_ai_strategi"),
     ]);
     return [
       `*AI grup:* ${aktif === "1" ? "aktif" : "mati"} · mode ${mode}`,
+      `Cara menjawab: ${strategiC === "giliran" ? "bergiliran" : "gabungan semua penyedia"}`,
       `Model Claude: ${modelC === "otomatis" ? "otomatis (Haiku ringan · Sonnet kuliah/koding · Opus sangat berat)" : modelC}`,
       `Pemakaian hari ini: ${pakai}${batas > 0 ? ` / ${batas}` : " (tanpa batas)"}`,
-      `Penyedia bergiliran: ${tersedia.length ? tersedia.map((p) => LABEL_PENYEDIA[p]).join(" → ") : "belum ada"}`,
+      `Penyedia: ${tersedia.length ? tersedia.map((p) => LABEL_PENYEDIA[p]).join(" + ") : "belum ada"}`,
     ].join("\n");
   }
-  return "Perintah: `!aigrup aktif` · `mati` · `status` · `mode perintah|pertanyaan|semua` · `reset`";
+  return "Perintah: `!aigrup aktif` · `mati` · `status` · `mode perintah|pertanyaan|semua` · `strategi gabung|giliran` · `reset`";
 }
 
 // ---------------------------------------------------------------- pesan grup
+
+export type StrategiGrup = "gabung" | "giliran";
+
+interface Draf {
+  penyedia: Penyedia;
+  model?: string;
+  teks: string;
+}
+
+const URUT_UTAMA: readonly Penyedia[] = ["claude", "gemini", "openrouter"];
+/** Waktu tunggu penyedia lain setelah draf pertama masuk: soal berat boleh menunggu lebih lama (Opus bisa lambat). */
+const TENGGANG_MS: Record<TingkatSoal, number> = { ringan: 8_000, berat: 20_000, sangat_berat: 45_000 };
+
+/** Nama model untuk ditampilkan di bawah jawaban: "nvidia/nemotron-3-super:free" → "nemotron-3-super". */
+const modelPendek = (m?: string) => (m ?? "").replace(/^[^/]+\//, "").replace(/:free$/, "");
+
+interface PermintaanDraf {
+  prompt: string;
+  gambar?: string;
+  modelClaude?: string;
+}
+
+/** Kirim ke semua penyedia sekaligus. Selesai kalau semuanya sudah menjawab, atau `tenggang` ms setelah draf pertama berhasil. */
+function kumpulkanDraf(db: Db, tersedia: readonly Penyedia[], r: PermintaanDraf, now: Date, tenggang: number): Promise<Draf[]> {
+  return new Promise((resolve) => {
+    const draf: Draf[] = [];
+    let selesai = 0;
+    let tuntas = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const akhiri = () => {
+      if (tuntas) return;
+      tuntas = true;
+      if (timer) clearTimeout(timer);
+      resolve(URUT_UTAMA.map((p) => draf.find((d) => d.penyedia === p)).filter((d): d is Draf => !!d)); // urutan tetap: Claude, Gemini, OpenRouter
+    };
+    for (const p of tersedia) {
+      panggilAI(db, { fitur: "chat_grup", system: SYSTEM_GRUP, prompt: r.prompt, now, timeoutMs: p === "claude" && r.modelClaude === "opus" ? 120_000 : 60_000, penyedia: p, model: p === "claude" ? r.modelClaude : undefined, gambar: r.gambar })
+        .then((h) => {
+          const teks = h.ok ? bersihkanBalasan(h.teks) : "";
+          if (teks) {
+            draf.push({ penyedia: p, model: h.ok ? h.model : undefined, teks });
+            if (!timer && !tuntas) timer = setTimeout(akhiri, tenggang);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (++selesai === tersedia.length) akhiri();
+        });
+    }
+  });
+}
+
+/** Urutan penyedia untuk tahap penggabungan: Claude dulu (paling rapi), kecuali kuota langganannya sudah tinggi. */
+async function urutanPenggabung(db: Db, tersedia: readonly Penyedia[], now: Date): Promise<Penyedia[]> {
+  const urut = URUT_UTAMA.filter((p) => tersedia.includes(p));
+  const tinggi = (await batasClaude(db, now)).some((j) => (j.kode === "five_hour" ? j.persen >= 70 : j.persen >= 85));
+  return tinggi ? [...urut.filter((p) => p !== "claude"), ...urut.filter((p) => p === "claude")] : urut;
+}
+
+/** Gabungkan beberapa draf jadi satu jawaban. null = semua penyedia gagal menggabungkan. */
+async function gabungkan(db: Db, draf: Draf[], promptDasar: string, ada_foto: boolean, tingkat: TingkatSoal, tersedia: readonly Penyedia[], now: Date): Promise<{ teks: string; penyedia: Penyedia; model?: string } | null> {
+  const huruf = ["A", "B", "C", "D"];
+  const prompt = [
+    promptDasar,
+    ada_foto ? "(Penanya melampirkan sebuah gambar; draf di bawah sudah melihatnya.)" : "",
+    "",
+    "# Draf jawaban",
+    ...draf.map((d, i) => `## Jawaban ${huruf[i]}\n${d.teks}`),
+    "",
+    "Tulis SATU jawaban final terbaik untuk pesan baru di atas.",
+  ].join("\n");
+  const modelClaude = await modelClaudeGrup(db, tingkat === "sangat_berat" ? "berat" : tingkat, now); // menggabungkan tidak perlu Opus
+  for (const p of await urutanPenggabung(db, tersedia, now)) {
+    const h = await panggilAI(db, { fitur: "chat_grup", system: SYSTEM_GRUP + SYSTEM_EDITOR, prompt, now, timeoutMs: 60_000, penyedia: p, model: p === "claude" ? modelClaude : undefined });
+    const teks = h.ok ? bersihkanBalasan(h.teks) : "";
+    if (teks) return { teks, penyedia: p, model: h.ok ? h.model : undefined };
+  }
+  return null;
+}
 
 const bersihNama = (n: string | undefined, nomor: string) => (n ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, 30) || `+${nomor.slice(-4)}`;
 
@@ -264,7 +372,7 @@ const bersihNama = (n: string | undefined, nomor: string) => (n ?? "").replace(/
  * Proses satu pesan grup. Mengembalikan teks balasan untuk dikirim ke grup, atau null (diabaikan).
  * `opsi.mengetik` dipanggil sekali sebelum menunggu AI.
  */
-export async function prosesPesanGrup(db: Db, m: IncomingWaMessage, now: Date, opsi: { mengetik?: () => void } = {}): Promise<string | null> {
+export async function prosesPesanGrup(db: Db, m: IncomingWaMessage, now: Date, opsi: { mengetik?: () => void; /** tes: waktu tunggu setelah draf pertama (ms) */ tenggang?: number } = {}): Promise<string | null> {
   const g = m.grup;
   if (!g) return null;
   const teks = m.text.trim().slice(0, 1500);
@@ -356,27 +464,57 @@ export async function prosesPesanGrup(db: Db, m: IncomingWaMessage, now: Date, o
     isi,
   ].join("\n");
 
-  // giliran Claude: model dipilih dari beratnya soal (haiku / sonnet / opus); penyedia lain memakai model otomatisnya sendiri
-  const modelClaude = await modelClaudeGrup(db, tingkatSoal(isi, { gambar: !!foto, kutipan: kutip?.teks }), now);
+  // model Claude dipilih dari beratnya soal (haiku / sonnet / opus); penyedia lain memakai model otomatisnya sendiri
+  const tingkat = tingkatSoal(isi, { gambar: !!foto, kutipan: kutip?.teks });
+  const modelClaude = await modelClaudeGrup(db, tingkat, now);
+  const strategi = (await getSetting(db, "grup_ai_strategi")) === "giliran" ? "giliran" : "gabung";
+  const tampilTanda = (await getSetting(db, "grup_ai_tanda")) === "1";
+  const promptPenuh = prompt; // dengan bagian "# Gambar" (untuk penyedia yang membaca gambar)
+  const promptDasar = prompt.replace(/# Gambar\nGambar terlampir:[^\n]*\n\n?/, ""); // tahap penggabungan tidak melihat gambar
 
   try {
     opsi.mengetik?.();
-    const urutan = urutanGiliran(tersedia, await giliranBerikut(db));
-    for (const p of urutan) {
-      const h = await panggilAI(db, { fitur: "chat_grup", system: SYSTEM_GRUP, prompt, now, timeoutMs: p === "claude" && modelClaude === "opus" ? 120_000 : 60_000, penyedia: p, model: p === "claude" ? modelClaude : undefined, gambar: foto?.file });
-      if (!h.ok) continue; // penyedia ini gagal: langsung giliran berikutnya (alasan teknis tercatat di log panggilan AI)
-      const jawaban = bersihkanBalasan(h.teks);
-      if (!jawaban) continue;
-      await db.aiChat.createMany({
-        data: [
-          { kanal, peran: "user", isi: `${nama}: ${isi}${foto ? " [mengirim foto]" : ""}`, waktu: now },
-          { kanal, peran: "asisten", isi: `Asisten: ${jawaban}`.slice(0, 1500), waktu: new Date(now.getTime() + 1) },
-        ],
-      });
-      const tanda = (await getSetting(db, "grup_ai_tanda")) === "1" ? `\n\n_via ${LABEL_PENYEDIA[h.penyedia ?? p]}${h.model ? ` · ${h.model}` : ""}_` : "";
-      return `${jawaban}${tanda}`;
+    let jawaban = "";
+    let tanda = "";
+
+    if (strategi === "gabung" && tersedia.length >= 2) {
+      // ---- gabungan: tanya semua penyedia sekaligus, lalu satukan jadi satu jawaban terbaik
+      const draf = await kumpulkanDraf(db, tersedia, { prompt: promptPenuh, gambar: foto?.file, modelClaude }, now, opsi.tenggang ?? TENGGANG_MS[tingkat]);
+      if (draf.length === 1) {
+        jawaban = draf[0].teks; // hanya satu yang menjawab: tidak ada yang digabung
+        tanda = `via ${LABEL_PENYEDIA[draf[0].penyedia]}${draf[0].model ? ` · ${modelPendek(draf[0].model)}` : ""}`;
+      } else if (draf.length > 1) {
+        const akhir = await gabungkan(db, draf, promptDasar, !!foto, tingkat, tersedia, now);
+        if (akhir) {
+          jawaban = akhir.teks;
+          tanda = `digabung dari ${draf.map((d) => `${LABEL_PENYEDIA[d.penyedia]}${d.model ? ` · ${modelPendek(d.model)}` : ""}`).join(", ")}`;
+        } else {
+          jawaban = draf[0].teks; // penggabungan gagal: pakai draf terbaik (urutan Claude, Gemini, OpenRouter)
+          tanda = `via ${LABEL_PENYEDIA[draf[0].penyedia]}${draf[0].model ? ` · ${modelPendek(draf[0].model)}` : ""}`;
+        }
+      }
+    } else {
+      // ---- bergiliran (round robin): satu penyedia per pertanyaan, berikutnya sebagai cadangan kalau gagal
+      const urutan = urutanGiliran(tersedia, await giliranBerikut(db));
+      for (const p of urutan) {
+        const h = await panggilAI(db, { fitur: "chat_grup", system: SYSTEM_GRUP, prompt: promptPenuh, now, timeoutMs: p === "claude" && modelClaude === "opus" ? 120_000 : 60_000, penyedia: p, model: p === "claude" ? modelClaude : undefined, gambar: foto?.file });
+        if (!h.ok) continue; // penyedia ini gagal: langsung giliran berikutnya (alasan teknis tercatat di log panggilan AI)
+        jawaban = bersihkanBalasan(h.teks);
+        if (!jawaban) continue;
+        tanda = `via ${LABEL_PENYEDIA[h.penyedia ?? p]}${h.model ? ` · ${h.model}` : ""}`;
+        break;
+      }
     }
-    return bolehBeritahu("gagal", now, 10 * 60_000) ? "Maaf, layanan AI lagi sibuk atau bermasalah. Coba lagi sebentar ya 🙏" : null;
+
+    if (!jawaban) return bolehBeritahu("gagal", now, 10 * 60_000) ? "Maaf, layanan AI lagi sibuk atau bermasalah. Coba lagi sebentar ya 🙏" : null;
+    await db.aiChat.createMany({
+      data: [
+        { kanal, peran: "user", isi: `${nama}: ${isi}${foto ? " [mengirim foto]" : ""}`, waktu: now },
+        { kanal, peran: "asisten", isi: `Asisten: ${jawaban}`.slice(0, 1500), waktu: new Date(now.getTime() + 1) },
+      ],
+    });
+    await catatJawabanGrup(db, now);
+    return `${jawaban}${tampilTanda ? `\n\n_${tanda}_` : ""}`;
   } finally {
     bersihFoto();
   }

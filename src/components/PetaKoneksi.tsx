@@ -202,14 +202,16 @@ function bangunNode(d: DataKoneksi, sempit = false): Record<IdNode, Node> {
       ? "Dimatikan"
       : !g.roda.length
         ? "Belum ada penyedia tersambung"
-        : `Berikut: ${NAMA_PENYEDIA[g.berikut ?? g.roda[0]]} · ${g.hariIni}× hari ini`;
+        : g.strategi === "gabung"
+          ? `Gabungan ${g.roda.length} penyedia · ${g.hariIni}× hari ini`
+          : `Berikut: ${NAMA_PENYEDIA[g.berikut ?? g.roda[0]]} · ${g.hariIni}× hari ini`;
   const grup: Node = {
     ikon: tile("users", g.aktif ? "bg-ok-bg text-ok" : "bg-subtle text-muted"),
     judul: "AI grup",
     sub: grupSub,
     href: "#grup",
     nada: g.aktif ? "ok" : undefined,
-    pendek: !g.dipilih ? "Belum dipilih" : !g.aktif ? "Mati" : !g.roda.length ? "Tanpa penyedia" : `Berikut: ${NAMA_PENYEDIA[g.berikut ?? g.roda[0]]}`,
+    pendek: !g.dipilih ? "Belum dipilih" : !g.aktif ? "Mati" : !g.roda.length ? "Tanpa penyedia" : g.strategi === "gabung" ? `Gabung ${g.roda.length} penyedia` : `Berikut: ${NAMA_PENYEDIA[g.berikut ?? g.roda[0]]}`,
   };
   void sempit;
 
@@ -292,7 +294,8 @@ function gayaSisi(d: DataKoneksi, a: IdNode, b: IdNode): Gaya {
   if (a === "grup" && isPenyedia(b)) {
     // hanya penyedia yang tersambung ikut bergiliran; yang lain tidak digambar
     if (!d.grup.aktif || !d.grup.roda.includes(b)) return "sembunyi";
-    return d.grup.berikut === b ? `rrnext_${b}` : `rr_${b}`;
+    // gabungan: semua penyedia bekerja bersamaan untuk tiap pertanyaan, jadi semua garis mengalir; giliran: hanya yang berikutnya
+    return d.grup.strategi === "gabung" || d.grup.berikut === b ? `rrnext_${b}` : `rr_${b}`;
   }
   if (a === "wa") return waNyala ? (b === "keluarga" && !d.nomor.keluarga ? "redup" : "biasa") : "redup";
   if (a === "hub" && isPenyedia(b)) {

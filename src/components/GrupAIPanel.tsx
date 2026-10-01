@@ -15,6 +15,7 @@ export default function GrupAIPanel({
   perOrang,
   tanda,
   modelClaude,
+  strategi,
   pakaiHariIni,
   penyedia,
 }: {
@@ -26,6 +27,8 @@ export default function GrupAIPanel({
   tanda: boolean;
   /** otomatis | haiku | sonnet | opus | bawaan */
   modelClaude: string;
+  /** gabung | giliran */
+  strategi: string;
   pakaiHariIni: number;
   /** nama penyedia yang tersambung, urut giliran */
   penyedia: string[];
@@ -40,8 +43,16 @@ export default function GrupAIPanel({
         <Badge tone={!jid ? "neutral" : aktif ? "ok" : "warn"}>{!jid ? "Belum dipilih" : aktif ? "Aktif" : "Dimatikan"}</Badge>
       </div>
       <p className="text-sm text-muted">
-        Di grup ini bot jadi asisten AI biasa untuk semua anggota (tanpa data DompetKos). Pakai awalan <code>/ai</code>, contoh <code>/ai apa itu fotosintesis?</code>. Penyedia dipakai bergiliran:{" "}
-        {penyedia.length ? <b>{penyedia.join(" → ")}</b> : "belum ada yang tersambung"}. Kalau satu gagal, langsung pindah ke berikutnya.
+        Di grup ini bot jadi asisten AI biasa untuk semua anggota (tanpa data DompetKos). Pakai awalan <code>/ai</code>, contoh <code>/ai apa itu fotosintesis?</code>.{" "}
+        {strategi === "giliran" ? (
+          <>
+            Penyedia dipakai bergiliran: {penyedia.length ? <b>{penyedia.join(" → ")}</b> : "belum ada yang tersambung"}. Kalau satu gagal, langsung pindah ke berikutnya.
+          </>
+        ) : (
+          <>
+            Tiap pertanyaan dijawab <b>bersama</b> oleh {penyedia.length ? <b>{penyedia.join(" + ")}</b> : "(belum ada penyedia tersambung)"}, lalu jawabannya digabung jadi satu jawaban terbaik.
+          </>
+        )}
       </p>
       <p className="text-sm">
         <span className="font-medium">Cara memilih grup:</span> masukkan bot ke grupnya, lalu dari nomor pemilik ketik <code>!aigrup aktif</code> di grup itu. ID grup terisi sendiri. Perintah lain: <code>!aigrup status</code>, <code>mati</code>, <code>mode perintah|pertanyaan|semua</code>, <code>reset</code>.
@@ -72,6 +83,16 @@ export default function GrupAIPanel({
               <option value="pertanyaan">/ai + pesan berbentuk pertanyaan</option>
               <option value="semua">Semua pesan teks (ramai & boros kuota)</option>
             </select>
+          </div>
+          <div>
+            <label htmlFor="grup_ai_strategi" className="label">
+              Cara menjawab
+            </label>
+            <select id="grup_ai_strategi" name="grup_ai_strategi" defaultValue={strategi} className="input">
+              <option value="gabung">Gabungan semua penyedia (paling akurat, ±4 panggilan per pertanyaan)</option>
+              <option value="giliran">Bergiliran satu penyedia (round robin, hemat kuota)</option>
+            </select>
+            <p className="hint">Gabungan memakai kuota Claude sekitar 2× per pertanyaan (jawaban + penggabungan); kalau kuota langganan jadi cepat habis, pilih Bergiliran.</p>
           </div>
           <div>
             <label htmlFor="grup_ai_model_claude" className="label">

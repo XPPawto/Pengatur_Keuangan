@@ -182,6 +182,8 @@ export async function simpanGrupAIAction(_: FormState, form: FormData): Promise<
   if (!(perOrang >= 0 && perOrang <= 60)) return { error: "Batas per orang per menit harus 0–60 (0 = tanpa batas)." };
   const modelClaude = String(form.get("grup_ai_model_claude") ?? "otomatis");
   if (!["otomatis", "haiku", "sonnet", "opus", "bawaan"].includes(modelClaude)) return { error: "Pilihan model Claude tidak dikenal." };
+  const strategi = String(form.get("grup_ai_strategi") ?? "gabung");
+  if (!["gabung", "giliran"].includes(strategi)) return { error: "Cara menjawab tidak dikenal." };
   const aktif = form.get("grup_ai_aktif") === "on";
   if (aktif && !jid) return { error: "Pilih grupnya dulu (ketik !aigrup aktif di grup, atau isi ID grup)." };
   await setSetting(prisma, "grup_ai_jid", jid);
@@ -191,6 +193,7 @@ export async function simpanGrupAIAction(_: FormState, form: FormData): Promise<
   await setSetting(prisma, "grup_ai_per_orang_menit", String(perOrang));
   await setSetting(prisma, "grup_ai_tanda", form.get("grup_ai_tanda") === "on" ? "1" : "0");
   await setSetting(prisma, "grup_ai_model_claude", modelClaude);
+  await setSetting(prisma, "grup_ai_strategi", strategi);
   revalidatePath("/koneksi");
   return { ok: "Pengaturan AI grup disimpan." };
 }
