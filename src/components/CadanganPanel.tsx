@@ -41,17 +41,17 @@ export default function CadanganPanel({
         <div id="gemini" className="card card-pad scroll-mt-20">
           <Judul c={g} ikon="sparkles" />
           <p className="mb-3 text-sm text-muted">
-            Lewat <b>Gemini CLI</b> resmi Google, gratis. Pilih salah satu: login akun Google sekali di server, atau API key gratis dari Google AI Studio.
+            Gratis, resmi dari Google. Pilih salah satu: API key dari Google AI Studio (paling gampang, cukup lewat website ini), atau login akun Google lewat Gemini CLI di server.
           </p>
           {!g.ada && (
             <ol className="mb-3 space-y-2 text-sm">
               <li>
-                <b>Cara A (login Google):</b> pasang lalu login sekali di folder khusus bot:
-                <code className="mt-1 block overflow-x-auto rounded-lg bg-subtle px-3 py-2 text-xs">npm i -g @google/gemini-cli{"\n"}HOME=$PWD/data/gemini-home NO_BROWSER=true gemini</code>
-                <span className="hint">Pilih &quot;Login with Google&quot;, buka link-nya di HP, tempel kodenya, lalu keluar (/quit).</span>
+                <b>Cara A (API key, disarankan):</b> buka <span className="font-medium">aistudio.google.com</span> → Get API key → Create API key, lalu tempel di bawah. Tidak perlu memasang apa pun di server.
               </li>
               <li>
-                <b>Cara B (API key):</b> buat key gratis di <span className="font-medium">aistudio.google.com</span> → Get API key, lalu tempel di bawah. Tetap butuh <code>npm i -g @google/gemini-cli</code>.
+                <b>Cara B (login Google):</b> pasang Gemini CLI lalu login sekali di folder khusus bot:
+                <code className="mt-1 block overflow-x-auto rounded-lg bg-subtle px-3 py-2 text-xs">npm i -g @google/gemini-cli{"\n"}HOME=$PWD/data/gemini-home NO_BROWSER=true gemini</code>
+                <span className="hint">Pilih &quot;Login with Google&quot;, buka link-nya di HP, tempel kodenya, lalu keluar (/quit).</span>
               </li>
             </ol>
           )}
@@ -152,7 +152,7 @@ function Kunci({ c, placeholder }: { c: Cadangan; placeholder: string }) {
     <div className="space-y-2">
       {c.ada && (
         <p className="text-sm">
-          {c.sumber === "login" ? "Login akun Google tersimpan di folder bot" : <>API key <span className="num">{c.samaran}</span>{c.sumber === "env" ? " (.env)" : ""}</>}
+          {c.sumber === "login" ? "Login akun Google (lewat Gemini CLI)" : <>API key <span className="num">{c.samaran}</span>{c.sumber === "env" ? " (.env)" : ""}</>}
           {c.model ? <span className="text-muted"> · model {c.model}</span> : null}
           {c.modelTerakhir && c.modelTerakhir !== c.model ? <span className="text-muted"> · terakhir pakai {c.modelTerakhir}</span> : null}
         </p>

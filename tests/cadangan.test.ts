@@ -2,11 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleMessage } from "@/lib/bot/handler";
 import { fromWib } from "@/lib/time";
 import type { HasilClaude } from "@/lib/ai/claude";
-import { golongkanGemini, penjalanGeminiCli } from "@/lib/ai/gemini";
+import { golongkanGemini, penjalanGeminiApi, penjalanGeminiCli } from "@/lib/ai/gemini";
 import { aturDaftarModel, golongkanOpenRouter, masalahModel, penjalanOpenRouter } from "@/lib/ai/openrouter";
 import { panggilAI, pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI, statusAI, statusCadangan, tesKoneksiAI, urutanPenyedia } from "@/lib/ai/panggil";
 import { setSetting } from "@/lib/services/settings";
@@ -227,17 +227,65 @@ describe("Gemini CLI", () => {
       expect(r).toMatchObject({ home, sistem: "SISTEM-RAHASIA", apiKey: KUNCI_G, anthropic: null, trust: "true", auth: "gemini-api-key", prompt: "halo gemini" });
       expect(r.args).toEqual(["-p", "", "-o", "json", "-m", "gemini-2.5-flash", "--approval-mode", "plan"]);
       expect(r.args.join(" ")).not.toContain("halo");
-      expect(r.tools.exclude).toEqual(expect.arrayContaining(["run_shell_command", "web_fetch", "google_web_search", "write_file"]));
+      expect(r.tools).toEqual({ core: ["read_file", "read_many_files"] });
+      expect(r.policy).toContain('decision = "deny"');
+      for (const t of ["run_shell_command", "web_fetch", "google_web_search", "write_file"]) expect(r.policy).toContain(`"${t}"`);
       expect(h.token).toEqual({ masuk: 120, keluar: 30 });
       expect((fs.statSync(path.join(home, ".gemini/settings.json")).mode & 0o777).toString(8)).toBe("600");
 
       const k = await penjalanGeminiCli({ system: "s", prompt: "MODE:kuota", model: "gemini-2.5-flash", apiKey: KUNCI_G });
       expect(k).toMatchObject({ ok: false, alasan: "limit" });
+
+      // peringatan warna/deprecation & stack trace dibuang; pesan asli yang bersarang di JSON yang ditampilkan
+      const s = await penjalanGeminiCli({ system: "s", prompt: "MODE:key-salah", model: "gemini-2.5-flash", apiKey: KUNCI_G });
+      expect(s).toMatchObject({ ok: false, alasan: "belum_login", pesan: "API key not valid. Please pass a valid API key." });
     } finally {
       delete process.env.ANTHROPIC_API_KEY;
       process.env.GEMINI_BIN = lama.bin;
       process.env.GEMINI_HOME = lama.home;
       fs.rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Gemini lewat API key (API resmi langsung)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const pasang = (status: number, body: unknown) => {
+    const f = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", f);
+    return f;
+  };
+
+  it("kirim prompt sistem & kunci di header, jawaban tanpa bagian 'thought'", async () => {
+    const f = pasang(200, {
+      candidates: [{ content: { parts: [{ text: "mikir...", thought: true }, { text: "Halo " }, { text: "Abdul" }] }, finishReason: "STOP" }],
+      usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 5, thoughtsTokenCount: 20 },
+    });
+    const h = await penjalanGeminiApi({ system: "SISTEM", prompt: "halo", model: "gemini-2.5-flash", apiKey: KUNCI_G });
+    expect(h).toMatchObject({ ok: true, teks: "Halo Abdul", token: { masuk: 50, keluar: 25 } });
+    const [url, init] = f.mock.calls[0];
+    expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
+    expect(url).not.toContain(KUNCI_G);
+    expect((init!.headers as Record<string, string>)["x-goog-api-key"]).toBe(KUNCI_G);
+    const body = JSON.parse(String(init!.body));
+    expect(body.systemInstruction.parts[0].text).toBe("SISTEM");
+    expect(body.contents[0].parts[0].text).toBe("halo");
+    expect(body.tools).toBeUndefined();
+  });
+
+  it("error Google digolongkan dengan benar", async () => {
+    pasang(400, { error: { code: 400, message: "API key not valid. Please pass a valid API key.", status: "INVALID_ARGUMENT" } });
+    expect(await penjalanGeminiApi({ system: "s", prompt: "p", model: "gemini-2.5-flash", apiKey: KUNCI_G })).toMatchObject({ ok: false, alasan: "belum_login" });
+    pasang(429, { error: { code: 429, message: "You exceeded your current quota", status: "RESOURCE_EXHAUSTED" } });
+    expect(await penjalanGeminiApi({ system: "s", prompt: "p", model: "gemini-2.5-flash", apiKey: KUNCI_G })).toMatchObject({ ok: false, alasan: "limit" });
+    pasang(200, { promptFeedback: { blockReason: "SAFETY" } });
+    expect(await penjalanGeminiApi({ system: "s", prompt: "p", model: "gemini-2.5-flash", apiKey: KUNCI_G })).toMatchObject({ ok: false, alasan: "gagal", pesan: expect.stringContaining("SAFETY") });
+  });
+
+  it("nama model aneh ditolak sebelum dikirim", async () => {
+    const f = pasang(200, {});
+    const h = await penjalanGeminiApi({ system: "s", prompt: "p", model: "../../etc", apiKey: KUNCI_G });
+    expect(h.ok).toBe(false);
+    expect(f).not.toHaveBeenCalled();
   });
 });
