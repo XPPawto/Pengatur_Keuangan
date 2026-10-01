@@ -6,6 +6,10 @@ export const DEFAULT_SETTINGS = {
   batas_tahan: "25000",
   /** Izinkan login website pakai kode yang dikirim ke WhatsApp. */
   otp_login: "1",
+  /** Pembagian default uang tambahan (kiriman Ayah, uang ekstra), dalam persen per amplop. */
+  bagi_ekstra: "kado:50,darurat:50",
+  /** Nama pengirim default untuk kiriman tambahan. */
+  pengirim_default: "Ayah",
 } as const;
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
 

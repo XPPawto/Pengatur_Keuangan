@@ -1,5 +1,6 @@
 import type { Db } from "../db";
 import { confirmPeriod, getPeriodAllocations } from "./periods";
+import type { Actor } from "./activity-log";
 import { enqueue } from "./outbox";
 import { recipientsFor } from "./recipients";
 import { konfirmasiUangText } from "./reports";
@@ -7,8 +8,8 @@ import { getSetting } from "./settings";
 import { wibDate } from "../time";
 
 /** Konfirmasi periode + kirim tanda terima ke keluarga yang mengaktifkannya. Dipakai bot & website. */
-export async function confirmPeriodAndNotify(db: Db, periodId: number, now: Date) {
-  const hasil = await confirmPeriod(db, periodId, now);
+export async function confirmPeriodAndNotify(db: Db, periodId: number, now: Date, actor?: Actor) {
+  const hasil = await confirmPeriod(db, periodId, now, actor);
   const [keluarga, nama, alloc] = await Promise.all([
     recipientsFor(db, "keluarga", "konfirmasiUang"),
     getSetting(db, "nama_pengguna"),

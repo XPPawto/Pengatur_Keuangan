@@ -3,6 +3,7 @@ import { jatahHarian } from "../money";
 import { addDays, wibDate } from "../time";
 import { getBalances } from "./envelopes";
 import { getCurrentPeriod, hariSisaPeriode } from "./periods";
+import { logActivity, type Actor } from "./activity-log";
 
 export interface DailyStatus {
   periodId: number;
@@ -71,9 +72,13 @@ export async function syncDailyLog(db: Db, tanggal: string, now: Date, opts: { t
   await db.dailyLog.upsert({ where: { tanggal }, create: { tanggal, ...data }, update: data });
 }
 
-export async function markTanpaJajan(db: Db, now: Date) {
+export async function markTanpaJajan(db: Db, now: Date, actor: Actor = { oleh: "web", sumber: "web" }) {
   const tanggal = wibDate(now);
+  const sebelum = (await db.dailyLog.findUnique({ where: { tanggal } }))?.tanpaJajan ?? false;
   await syncDailyLog(db, tanggal, now, { tanpaJajan: true });
+  if (!sebelum) {
+    await logActivity(db, actor, "tanpa_jajan", `Tandai ${tanggal} tanpa jajan`, { undo: { t: "tanpa_jajan_off", tanggal, sebelum }, now });
+  }
   return tanggal;
 }
 

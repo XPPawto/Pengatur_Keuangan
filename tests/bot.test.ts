@@ -75,7 +75,8 @@ describe("uang masuk", () => {
     await kirim("masuk 300", at("2026-10-11", 15));
     const [ok] = await kirim("ok", at("2026-10-11", 15));
     expect(ok).toContain("Rp80.000 udah pindah ke Darurat");
-    expect((await saldo("darurat")).saldo).toBe(20000 + 80000 + 33000);
+    // sisa makan 80rb + sisa paket data 30rb (belum dibeli) pindah ke Darurat
+    expect((await saldo("darurat")).saldo).toBe(20000 + 80000 + 30000 + 33000);
     expect((await saldo("makan")).saldo).toBe(85000);
   });
 });

@@ -5,6 +5,8 @@ import { AppError } from "./errors";
 import { getBalances } from "./envelopes";
 import { getCurrentPeriod } from "./periods";
 import { recordExpense } from "./transactions";
+import { logActivity, type Actor } from "./activity-log";
+import { rp } from "../money";
 
 export async function listBills(db: Db) {
   return db.bill.findMany({ include: { envelope: true }, orderBy: [{ status: "asc" }, { jatuhTempo: "asc" }] });
@@ -97,13 +99,14 @@ export interface PayResult {
  * Bayar tagihan: catat pengeluaran dari amplop sumber (kalau ada) lalu tandai lunas.
  * Nominal boleh beda dari perkiraan; nominal tagihan diperbarui ke angka aslinya.
  */
-export async function payBill(db: Db, id: number, opts: { nominal?: number; now: Date; sumber: Sumber; pesanAsli?: string }): Promise<PayResult> {
+export async function payBill(db: Db, id: number, opts: { nominal?: number; now: Date; sumber: Sumber; pesanAsli?: string; actor?: Actor }): Promise<PayResult> {
   const bill = await db.bill.findUnique({ where: { id }, include: { envelope: true } });
   if (!bill) throw new AppError("not_found", "Tagihan tidak ditemukan.");
   if (bill.status === "lunas") throw new AppError("invalid", `${bill.nama} ${bill.jatuhTempo} sudah lunas.`);
   const nominal = opts.nominal ?? bill.nominal;
 
   let saldoSetelah: number | null = null;
+  let txId: number | null = null;
   if (bill.envelope) {
     const r = await recordExpense(db, {
       kode: bill.envelope.kode as EnvelopeKode,
@@ -112,10 +115,17 @@ export async function payBill(db: Db, id: number, opts: { nominal?: number; now:
       sumber: opts.sumber,
       pesanAsli: opts.pesanAsli,
       now: opts.now,
+      billId: bill.id,
+      log: false,
     });
     saldoSetelah = r.balance.saldo;
+    txId = r.id;
   }
   await db.bill.update({ where: { id }, data: { status: "lunas", dibayarPada: opts.now, nominal } });
+  await logActivity(db, opts.actor ?? { oleh: opts.sumber, sumber: opts.sumber }, "bayar_tagihan", `Bayar ${bill.nama} ${bill.jatuhTempo} ${rp(nominal)}`, {
+    undo: { t: "batal_bayar", billId: bill.id, txId, nominalSebelum: bill.nominal },
+    now: opts.now,
+  });
   return {
     bill: { id: bill.id, nama: bill.nama, nominal, jatuhTempo: bill.jatuhTempo },
     dibayar: nominal,
@@ -124,8 +134,14 @@ export async function payBill(db: Db, id: number, opts: { nominal?: number; now:
   };
 }
 
-export async function markBillUnpaid(db: Db, id: number) {
+/** Batalkan status lunas; transaksi pembayarannya (kalau ada) ikut dihapus supaya saldo kembali. */
+export async function markBillUnpaid(db: Db, id: number, now = new Date(), actor: Actor = { oleh: "web", sumber: "web" }) {
+  const bill = await db.bill.findUnique({ where: { id } });
+  if (!bill) throw new AppError("not_found", "Tagihan tidak ditemukan.");
+  const txs = await db.transaction.findMany({ where: { billId: id } });
+  await db.transaction.deleteMany({ where: { billId: id } });
   await db.bill.update({ where: { id }, data: { status: "belum", dibayarPada: null } });
+  await logActivity(db, actor, "batal_lunas", `Batalkan lunas ${bill.nama} ${bill.jatuhTempo}${txs.length ? ` (pembayaran ${rp(txs.reduce((a, t) => a + t.nominal, 0))} dihapus)` : ""}`, { now });
 }
 
 /** Tagihan dengan kesiapan dana: saldo amplop sumber cukup atau kurang. */
@@ -134,13 +150,19 @@ export async function billsWithReadiness(db: Db, now: Date) {
   const balances = await getBalances(db, period?.id ?? null);
   const today = wibDate(now);
   const bills = await listBills(db);
-  return bills.map((b) => {
-    const saldo = b.envelope ? (balances.find((x) => x.id === b.envelopeId)?.saldo ?? 0) : null;
-    return {
-      ...b,
-      hariLagi: diffDays(today, b.jatuhTempo),
-      saldoSumber: saldo,
-      cukup: saldo === null ? null : saldo >= b.nominal,
-    };
-  });
+  // Kesiapan dihitung bertahap: tagihan terdekat memakai saldo amplop duluan, berikutnya memakai sisanya.
+  const sisa = new Map<number, number>();
+  for (const b of balances) sisa.set(b.id, b.saldo);
+  const urut = [...bills].sort((a, b) => a.jatuhTempo.localeCompare(b.jatuhTempo));
+  const info = new Map<number, { saldoSumber: number | null; cukup: boolean | null }>();
+  for (const b of urut) {
+    if (b.status !== "belum" || !b.envelopeId) {
+      info.set(b.id, { saldoSumber: null, cukup: null });
+      continue;
+    }
+    const tersedia = Math.max(0, sisa.get(b.envelopeId) ?? 0);
+    info.set(b.id, { saldoSumber: tersedia, cukup: tersedia >= b.nominal });
+    sisa.set(b.envelopeId, tersedia - b.nominal);
+  }
+  return bills.map((b) => ({ ...b, hariLagi: diffDays(today, b.jatuhTempo), ...info.get(b.id)! }));
 }

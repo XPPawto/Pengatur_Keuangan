@@ -36,7 +36,8 @@ model Period {
   id             Int       @id @default(autoincrement())
   tanggalMulai   String
   tanggalSelesai String
-  pemasukan      Int
+  pemasukan      Int // uang mingguan
+  tambahan       Int       @default(0) // uang lain yang masuk di tengah periode (kiriman, uang ekstra, pinjaman, piutang kembali)
   status         String
   dikonfirmasiPada DateTime?
   createdAt      DateTime  @default(now())
@@ -80,6 +81,8 @@ model Transaction {
   pesanAsli  String?
   tanggal    String // tanggal WIB transaksi
   dibuatPada DateTime @default(now())
+  billId     Int? // terisi kalau transaksi ini pembayaran tagihan
+  debtId     Int? // terisi kalau transaksi ini terkait hutang-piutang
   period     Period   @relation(fields: [periodId], references: [id], onDelete: Cascade)
   envelope   Envelope @relation(fields: [envelopeId], references: [id])
 
@@ -292,4 +295,72 @@ model PendingAction {
   dibuatPada DateTime @default(now())
 
   @@index([nomor])
+}
+
+// Jejak semua aksi yang mengubah data. Dipakai untuk riwayat aktivitas & undo.
+// undo = JSON berisi cara membatalkan aksi ini (lihat src/lib/services/activity.ts).
+model ActivityLog {
+  id             Int       @id @default(autoincrement())
+  waktu          DateTime  @default(now())
+  oleh           String // nomor WA, "web", atau "sistem"
+  sumber         String // wa | web | sistem
+  aksi           String
+  ringkasan      String
+  data           String? // JSON detail (nilai sebelum/sesudah)
+  undo           String? // JSON; null = tidak bisa dibatalkan
+  dibatalkanPada DateTime?
+  dibatalkanOleh String?
+
+  @@index([waktu])
+}
+
+// Pencocokan saldo sistem dengan uang asli (dompet + e-wallet).
+model Reconciliation {
+  id          Int      @id @default(autoincrement())
+  waktu       DateTime @default(now())
+  oleh        String
+  saldoSistem Int
+  saldoAsli   Int
+  selisih     Int // asli - sistem
+  tindakan    String @default("") // dicatat | uang_ekstra | diabaikan | cocok
+}
+
+// Hutang-piutang. arah: piutang (orang lain utang ke kita) | hutang (kita utang ke orang lain)
+// status: aktif | lunas
+model Debt {
+  id           Int           @id @default(autoincrement())
+  orang        String
+  arah         String
+  nominal      Int
+  catatan      String        @default("")
+  envelopeKode String        @default("darurat")
+  dibuatPada   DateTime      @default(now())
+  status       String        @default("aktif")
+  lunasPada    DateTime?
+  payments     DebtPayment[]
+
+  @@index([orang])
+}
+
+model DebtPayment {
+  id      Int      @id @default(autoincrement())
+  debtId  Int
+  nominal Int
+  waktu   DateTime @default(now())
+  debt    Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+}
+
+// Pemasukan di luar uang mingguan (mis. kiriman Ayah yang waktunya tidak tentu).
+// bagian = JSON { kode amplop: nominal } hasil pembagian.
+model ExtraIncome {
+  id       Int      @id @default(autoincrement())
+  periodId Int
+  dari     String // "Ayah", "Lainnya", ...
+  nominal  Int
+  bagian   String
+  catatan  String   @default("")
+  oleh     String
+  waktu    DateTime @default(now())
+
+  @@index([periodId])
 }

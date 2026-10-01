@@ -5,6 +5,8 @@ import { AppError } from "./errors";
 import { syncDailyLog } from "./daily";
 import { getBalances, type EnvelopeBalance } from "./envelopes";
 import { getCurrentPeriod } from "./periods";
+import { logActivity, snapTx, type Actor } from "./activity-log";
+import { rp } from "../money";
 
 export interface RecordInput {
   kode: EnvelopeKode;
@@ -17,6 +19,13 @@ export interface RecordInput {
   tanggal?: string;
   /** wajib diisi "YAKIN AMBIL TABUNGAN" untuk amplop terkunci */
   konfirmasiBukaKunci?: string;
+  /** pencatat aksi; default diambil dari `sumber` */
+  actor?: Actor;
+  /** false = pemanggil mencatat aktivitasnya sendiri (mis. satu pesan berisi banyak item) */
+  log?: boolean;
+  billId?: number;
+  debtId?: number;
+  jenis?: "keluar" | "koreksi";
 }
 
 export interface RecordResult {
@@ -51,7 +60,9 @@ export async function recordExpense(db: Db, input: RecordInput): Promise<RecordR
       periodId: period.id,
       envelopeId: env.id,
       nominal: input.nominal,
-      jenis: "keluar",
+      jenis: input.jenis ?? "keluar",
+      billId: input.billId ?? null,
+      debtId: input.debtId ?? null,
       catatan: (input.catatan ?? "").trim(),
       sumber: input.sumber,
       pesanAsli: input.pesanAsli,
@@ -61,6 +72,13 @@ export async function recordExpense(db: Db, input: RecordInput): Promise<RecordR
   });
   await syncDailyLog(db, tx.tanggal, input.now);
   const after = (await getBalances(db, period.id)).find((b) => b.kode === input.kode)!;
+  if (input.log !== false) {
+    const actor = input.actor ?? { oleh: input.sumber, sumber: input.sumber };
+    await logActivity(db, actor, "catat", `Catat ${tx.catatan || "pengeluaran"} ${rp(tx.nominal)} ke ${env.nama}`, {
+      undo: { t: "hapus_tx", ids: [tx.id] },
+      now: input.now,
+    });
+  }
 
   const batas = Math.floor(before.alokasi * 0.2);
   const cekBatas = before.jenis === "daily" || before.jenis === "fixed";
@@ -78,11 +96,29 @@ export async function lastTransaction(db: Db) {
   return db.transaction.findFirst({ orderBy: [{ dibuatPada: "desc" }, { id: "desc" }], include: { envelope: true } });
 }
 
-export async function deleteTransaction(db: Db, id: number, now: Date) {
-  const tx = await db.transaction.findUnique({ where: { id } });
+/**
+ * Hapus transaksi. Kalau transaksi itu pembayaran tagihan, tagihannya kembali "belum lunas".
+ * Isi lengkapnya disimpan di riwayat aktivitas, jadi bisa dipulihkan.
+ */
+export async function deleteTransaction(db: Db, id: number, now: Date, actor?: Actor, opts: { log?: boolean } = {}) {
+  const tx = await db.transaction.findUnique({ where: { id }, include: { envelope: true } });
   if (!tx) throw new AppError("not_found", "Transaksi tidak ditemukan.");
   await db.transaction.delete({ where: { id } });
+  const lunasKembali: number[] = [];
+  if (tx.billId) {
+    const bill = await db.bill.findUnique({ where: { id: tx.billId } });
+    if (bill?.status === "lunas") {
+      await db.bill.update({ where: { id: bill.id }, data: { status: "belum", dibayarPada: null } });
+      lunasKembali.push(bill.id);
+    }
+  }
   await syncDailyLog(db, tx.tanggal, now);
+  if (opts.log !== false) {
+    await logActivity(db, actor ?? { oleh: "web", sumber: "web" }, "hapus_transaksi", `Hapus ${tx.catatan || "pengeluaran"} ${rp(tx.nominal)} (${tx.envelope.nama})${lunasKembali.length ? ", tagihan kembali belum lunas" : ""}`, {
+      undo: { t: "pulihkan_tx", rows: [snapTx(tx)], lunasKembali },
+      now,
+    });
+  }
   return tx;
 }
 
@@ -91,6 +127,7 @@ export async function updateTransaction(
   id: number,
   data: { nominal?: number; catatan?: string; kode?: EnvelopeKode; konfirmasiBukaKunci?: string },
   now: Date,
+  actor?: Actor,
 ) {
   const tx = await db.transaction.findUnique({ where: { id }, include: { envelope: true } });
   if (!tx) throw new AppError("not_found", "Transaksi tidak ditemukan.");
@@ -110,7 +147,13 @@ export async function updateTransaction(
     where: { id },
     data: { nominal: data.nominal ?? tx.nominal, catatan: data.catatan ?? tx.catatan, envelopeId },
   });
+  if (tx.billId && data.nominal !== undefined) await db.bill.update({ where: { id: tx.billId }, data: { nominal: data.nominal } });
   await syncDailyLog(db, tx.tanggal, now);
+  const baru = data.nominal ?? tx.nominal;
+  await logActivity(db, actor ?? { oleh: "web", sumber: "web" }, "ubah_transaksi", `Ubah ${tx.catatan || "pengeluaran"}: ${rp(tx.nominal)} → ${rp(baru)}${envelopeId !== tx.envelopeId ? ", pindah amplop" : ""}`, {
+    undo: { t: "kembalikan_tx", id, sebelum: { nominal: tx.nominal, catatan: tx.catatan, envelopeId: tx.envelopeId } },
+    now,
+  });
 }
 
 export interface ListFilter {
