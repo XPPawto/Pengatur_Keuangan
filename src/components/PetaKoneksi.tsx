@@ -9,12 +9,12 @@ import { useWidth } from "./charts/useWidth";
 import { useDenyut, WARNA_PENYEDIA, type LogLive } from "./useDenyut";
 
 type IdFitur = "chat_web" | "chat_wa" | "struk" | "review" | "kategori";
-type IdPenyedia = "claude" | "gemini" | "openrouter";
+type IdPenyedia = "claude" | "gemini" | "openrouter" | "groq";
 type IdNode = "hub" | "wa" | "pemilik" | "keluarga" | "antrean" | "grup" | IdPenyedia | IdFitur | "fitur";
 /** rr_* = penyedia ikut bergiliran di AI grup; rrnext_* = penyedia yang mendapat giliran berikutnya (tebal & mengalir) */
-type Gaya = "aktif" | IdPenyedia | "pakai_claude" | "pakai_gemini" | "pakai_openrouter" | `rr_${IdPenyedia}` | `rrnext_${IdPenyedia}` | "tunggu" | "putus" | "biasa" | "redup" | "sembunyi";
+type Gaya = "aktif" | IdPenyedia | "pakai_claude" | "pakai_gemini" | "pakai_openrouter" | "pakai_groq" | `rr_${IdPenyedia}` | `rrnext_${IdPenyedia}` | "tunggu" | "putus" | "biasa" | "redup" | "sembunyi";
 
-const PENYEDIA: IdPenyedia[] = ["claude", "gemini", "openrouter"];
+const PENYEDIA: IdPenyedia[] = ["claude", "gemini", "openrouter", "groq"];
 const isPenyedia = (id: string): id is IdPenyedia => (PENYEDIA as string[]).includes(id);
 
 interface Tata {
@@ -29,6 +29,8 @@ interface Tata {
   lebarNode: number;
   lebarRingkas: number;
   lebarDaftar: number;
+  /** lebar kartu ringkas tertentu (mis. empat penyedia sebaris di HP) */
+  lebarKhusus?: Partial<Record<IdNode, number>>;
   /** judul kolom / baris kecil */
   label: { x: number; y: number; teks: string }[];
 }
@@ -46,12 +48,15 @@ const SISI: [IdNode, IdNode][] = [
   ["hub", "claude"],
   ["hub", "gemini"],
   ["hub", "openrouter"],
+  ["hub", "groq"],
   ["grup", "claude"],
   ["grup", "gemini"],
   ["grup", "openrouter"],
+  ["grup", "groq"],
   ["claude", "fitur"],
   ["gemini", "fitur"],
   ["openrouter", "fitur"],
+  ["groq", "fitur"],
 ];
 
 /** Layar lebar: lima kolom berjudul, kartu lebar seragam. Koordinat = titik tengah node. */
@@ -64,12 +69,13 @@ const LEBAR: Tata = {
     keluarga: [80, 258],
     antrean: [80, 388],
     wa: [300, 258],
-    hub: [560, 168],
-    grup: [560, 348],
-    claude: [835, 113],
-    gemini: [835, 258],
-    openrouter: [835, 403],
-    fitur: [1072, 238],
+    hub: [560, 152],
+    grup: [560, 352],
+    claude: [835, 82],
+    gemini: [835, 195],
+    openrouter: [835, 308],
+    groq: [835, 421],
+    fitur: [1072, 252],
   },
   sisi: SISI,
   ringkas: ["pemilik", "keluarga", "antrean"],
@@ -97,13 +103,15 @@ const SEMPIT: Tata = {
     wa: [180, 215],
     hub: [96, 345],
     grup: [264, 345],
-    claude: [62, 500],
-    gemini: [180, 500],
-    openrouter: [298, 500],
+    claude: [45, 500],
+    gemini: [135, 500],
+    openrouter: [225, 500],
+    groq: [315, 500],
     fitur: [180, 712],
   },
   sisi: SISI,
-  ringkas: ["pemilik", "keluarga", "antrean", "claude", "gemini", "openrouter", "hub", "grup"],
+  ringkas: ["pemilik", "keluarga", "antrean", "claude", "gemini", "openrouter", "groq", "hub", "grup"],
+  lebarKhusus: { claude: 82, gemini: 82, openrouter: 82, groq: 82 }, // empat penyedia sebaris
   lebarNode: 210,
   lebarRingkas: 108,
   lebarDaftar: 330,
@@ -115,15 +123,19 @@ const WARNA_GARIS: Record<Exclude<Gaya, "sembunyi">, { stroke: string; lebar: nu
   claude: { stroke: WARNA_PENYEDIA.claude, lebar: 2.2, alir: true },
   gemini: { stroke: WARNA_PENYEDIA.gemini, lebar: 2.2, alir: true },
   openrouter: { stroke: WARNA_PENYEDIA.openrouter, lebar: 2.2, alir: true },
+  groq: { stroke: WARNA_PENYEDIA.groq, lebar: 2.2, alir: true },
   pakai_claude: { stroke: WARNA_PENYEDIA.claude, lebar: 1.6, op: 0.75 },
   pakai_gemini: { stroke: WARNA_PENYEDIA.gemini, lebar: 1.6, op: 0.75 },
   pakai_openrouter: { stroke: WARNA_PENYEDIA.openrouter, lebar: 1.6, op: 0.75 },
+  pakai_groq: { stroke: WARNA_PENYEDIA.groq, lebar: 1.6, op: 0.75 },
   rr_claude: { stroke: WARNA_PENYEDIA.claude, lebar: 3, op: 0.6, kelas: "garis-giliran" },
   rr_gemini: { stroke: WARNA_PENYEDIA.gemini, lebar: 3, op: 0.6, kelas: "garis-giliran" },
   rr_openrouter: { stroke: WARNA_PENYEDIA.openrouter, lebar: 3, op: 0.6, kelas: "garis-giliran" },
+  rr_groq: { stroke: WARNA_PENYEDIA.groq, lebar: 3, op: 0.6, kelas: "garis-giliran" },
   rrnext_claude: { stroke: WARNA_PENYEDIA.claude, lebar: 4.5, kelas: "garis-giliran-alir" },
   rrnext_gemini: { stroke: WARNA_PENYEDIA.gemini, lebar: 4.5, kelas: "garis-giliran-alir" },
   rrnext_openrouter: { stroke: WARNA_PENYEDIA.openrouter, lebar: 4.5, kelas: "garis-giliran-alir" },
+  rrnext_groq: { stroke: WARNA_PENYEDIA.groq, lebar: 4.5, kelas: "garis-giliran-alir" },
   tunggu: { stroke: "var(--warn)", lebar: 1.8, putus: "5 5" },
   putus: { stroke: "var(--bad)", lebar: 1.6, putus: "4 6", op: 0.8 },
   biasa: { stroke: "var(--line-strong)", lebar: 1.4 },
@@ -172,7 +184,7 @@ interface Node {
   daftar?: { ikon: IconName; label: string; nilai: string; nyala: boolean }[];
 }
 
-const NAMA_PENYEDIA: Record<IdPenyedia, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter" };
+const NAMA_PENYEDIA: Record<IdPenyedia, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter", groq: "Groq" };
 
 function bangunNode(d: DataKoneksi, sempit = false): Record<IdNode, Node> {
   const waNada = d.wa.status === "terhubung" && d.wa.botHidup ? "ok" : d.wa.status === "menunggu_pairing" ? "warn" : "bad";
@@ -263,8 +275,8 @@ function bangunNode(d: DataKoneksi, sempit = false): Record<IdNode, Node> {
   };
 }
 
-function cadanganNode(d: DataKoneksi): Record<"gemini" | "openrouter", Node> {
-  const satu = (p: "gemini" | "openrouter"): Node => {
+function cadanganNode(d: DataKoneksi): Record<"gemini" | "openrouter" | "groq", Node> {
+  const satu = (p: "gemini" | "openrouter" | "groq"): Node => {
     const c = d.ai.cadangan.find((x) => x.penyedia === p);
     // nama model dipersingkat untuk kartu ("gemini-3.5-flash-lite" → "3.5-flash-lite", "nvidia/x:free" → "x"); nama lengkap di tooltip
     const modelPendek = (c?.model ?? "").replace(/^gemini-/, "").replace(/^[^/]+\//, "").replace(/:free$/, "");
@@ -277,7 +289,7 @@ function cadanganNode(d: DataKoneksi): Record<"gemini" | "openrouter", Node> {
     const pendek = !c?.aktif ? "Mati" : !c.ada ? "Belum" : c.labelKondisi;
     return { ikon, judul: c?.label ?? p, sub, pendek, judulLengkap: c?.model ? `${c.label}: ${c.labelKondisi} · ${c.model}` : undefined, href: `#${p}`, nada: c?.aktif && c.ada && !c.siap ? "bad" : undefined };
   };
-  return { gemini: satu("gemini"), openrouter: satu("openrouter") };
+  return { gemini: satu("gemini"), openrouter: satu("openrouter"), groq: satu("groq") };
 }
 
 /** Penyedia bisa dipakai, dimatikan/belum disambungkan (garisnya tidak digambar), atau bermasalah. */
@@ -505,11 +517,11 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
                 draggable={false}
                 title={n.judulLengkap ?? `${n.judul}: ${n.sub}`}
                 className={`absolute flex -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card shadow-sm transition hover:border-line-strong ${ringkas ? "flex-col items-center gap-1 px-1.5 py-2 text-center" : "items-center gap-2.5 px-3 py-2"} ${n.nada ? NADA_BORDER[n.nada] : "border-line"} ${warnaJalan(id) ? "mikir" : ""}`}
-                style={{ left: x, top: y, width: ringkas ? tata.lebarRingkas : tata.lebarNode, ["--warna-mikir" as string]: warnaJalan(id), ...cahaya }}
+                style={{ left: x, top: y, width: ringkas ? (tata.lebarKhusus?.[id] ?? tata.lebarRingkas) : tata.lebarNode, ["--warna-mikir" as string]: warnaJalan(id), ...cahaya }}
               >
                 {n.ikon}
                 <span className="w-full min-w-0">
-                  <span className={`block truncate font-semibold ${ringkas ? "text-[13px]" : "text-sm"} ${isHub ? "text-brand" : n.nada === "claude" ? "text-claude" : "text-fg"}`}>{n.judul}</span>
+                  <span className={`block truncate font-semibold ${tata.lebarKhusus?.[id] ? "text-[11.5px]" : ringkas ? "text-[13px]" : "text-sm"} ${isHub ? "text-brand" : n.nada === "claude" ? "text-claude" : "text-fg"}`}>{n.judul}</span>
                   <span className={`block text-[11px] leading-tight text-muted ${ringkas ? "line-clamp-2" : "truncate"}`}>{teksSub}</span>
                 </span>
               </Link>

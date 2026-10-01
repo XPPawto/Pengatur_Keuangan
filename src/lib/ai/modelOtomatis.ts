@@ -1,5 +1,6 @@
 import type { Db } from "../db";
 import type { HasilClaude } from "./claude";
+import { modelGroqRusak } from "./groq";
 import { masalahModel } from "./openrouter";
 
 /**
@@ -122,7 +123,7 @@ export function urutkanModel(penyedia: string, calon: string[], utama: string | 
  * Apakah kegagalan ini salah modelnya (lanjut ke model lain) atau masalah akun/kunci/batas harian (berhenti)?
  * `rusak` = model ditutup / tidak ada / ditolak akun; `sementara` = penuh, timeout, kena batas per model.
  */
-export function jenisGagal(penyedia: "gemini" | "openrouter", h: HasilClaude): JenisGagalModel | null {
+export function jenisGagal(penyedia: "gemini" | "openrouter" | "groq", h: HasilClaude): JenisGagalModel | null {
   if (h.ok) return null;
   if (h.alasan === "belum_login" || h.alasan === "belum_diatur" || h.alasan === "dimatikan" || h.alasan === "kuota") return null;
   if (penyedia === "openrouter") {
@@ -130,6 +131,11 @@ export function jenisGagal(penyedia: "gemini" | "openrouter", h: HasilClaude): J
     if (m) return m;
     // batas harian OpenRouter (limit) berlaku untuk akun, bukan modelnya: berhenti. Timeout/penuh: coba model lain.
     return h.alasan === "timeout" || h.alasan === "sibuk" ? "sementara" : null;
+  }
+  if (penyedia === "groq") {
+    // Groq: model dihentikan / tidak ada → rusak; batas per model (429), sibuk, timeout → coba model lain
+    if (modelGroqRusak(h.pesan)) return "rusak";
+    return h.alasan === "sibuk" || h.alasan === "timeout" || h.alasan === "limit" ? "sementara" : null;
   }
   if (/no longer available|not found|NOT_FOUND|is not supported|not supported for/i.test(h.pesan)) return "rusak";
   // Gemini: kuota gratis dihitung per model, jadi 429 pada satu model tidak berarti model lain ikut habis
@@ -154,5 +160,22 @@ export function calonGemini(ringan: boolean, utama: string | undefined, ditemuka
   const lite = (m: string) => (m.endsWith("-lite") ? 0 : 1);
   const baru = ditemukan.filter((m) => !CALON_GEMINI.includes(m) && !CALON_GEMINI_RINGAN.includes(m));
   if (ringan) baru.sort((a, b) => lite(a) - lite(b));
+  return [utama ?? "", ...dasar.filter((m) => ada.has(m)), ...baru];
+}
+
+/** Calon model Groq (urutan: kualitas jawaban dulu). Model pilihan pemilik selalu dicoba duluan. */
+export const CALON_GROQ = ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"];
+/** Tugas kecil: yang paling ringan dulu. */
+export const CALON_GROQ_RINGAN = ["llama-3.1-8b-instant", "openai/gpt-oss-20b", "llama-3.3-70b-versatile"];
+
+/**
+ * Calon model Groq berurutan. Dengan daftar dari Groq (`ditemukan`): model teruji yang masih aktif didahulukan, lalu model baru yang
+ * ditemukan. Tanpa daftar: daftar tetap. Model pilihan pemilik selalu paling depan.
+ */
+export function calonGroq(ringan: boolean, utama: string | undefined, ditemukan: string[] | null): string[] {
+  const dasar = ringan ? CALON_GROQ_RINGAN : CALON_GROQ;
+  if (!ditemukan?.length) return [utama ?? "", ...dasar];
+  const ada = new Set(ditemukan);
+  const baru = ditemukan.filter((m) => !CALON_GROQ.includes(m) && !CALON_GROQ_RINGAN.includes(m));
   return [utama ?? "", ...dasar.filter((m) => ada.has(m)), ...baru];
 }

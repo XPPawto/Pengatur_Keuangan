@@ -8,6 +8,7 @@ import { getSetting, setSetting } from "@/lib/services/settings";
 import { hapusRiwayat, ingat, jalankanAksiAI, lupakan, tanyaAsisten, validasiAksi, type AksiAI } from "@/lib/ai/asisten";
 import { CADANGAN, LABEL_KONDISI, LABEL_PENYEDIA, labelKondisiCadangan, simpanKunciCadangan, simpanTokenAI, tesKoneksiAI, type KondisiAI, type Penyedia, type PenyediaCadangan } from "@/lib/ai/panggil";
 import { modelGratis } from "@/lib/ai/openrouter";
+import { modelGroqValid } from "@/lib/ai/groq";
 import type { FormState } from "./actions";
 
 const KANAL_WEB = "web";
@@ -24,7 +25,7 @@ export interface JawabanState {
   dipilih?: boolean;
 }
 
-const PENYEDIA_BOLEH: readonly string[] = ["claude", "gemini", "openrouter"];
+const PENYEDIA_BOLEH: readonly string[] = ["claude", "gemini", "openrouter", "groq"];
 
 /** `pilih` datang dari browser: divalidasi di sini; nama model divalidasi lagi per penyedia di panggilAI. */
 export async function tanyaAsistenAction(pesan: string, pilih?: { penyedia?: string; model?: string }): Promise<JawabanState> {
@@ -222,13 +223,22 @@ export async function simpanCadanganAction(_: FormState, form: FormData): Promis
   const gm = String(form.get("ai_gemini_model") ?? "").trim();
   const gmr = String(form.get("ai_gemini_model_ringan") ?? "").trim();
   const om = String(form.get("ai_openrouter_model") ?? "").trim();
-  const urutan = String(form.get("ai_urutan_cadangan") ?? "gemini,openrouter");
+  const gq = String(form.get("ai_groq_model") ?? "").trim();
+  const gqr = String(form.get("ai_groq_model_ringan") ?? "").trim();
+  // pilihan urutan = penyedia cadangan pertama; sisanya mengikuti urutan bawaan (Gemini, OpenRouter, Groq)
+  const awal = String(form.get("ai_urutan_cadangan") ?? "gemini").split(",")[0] as PenyediaCadangan;
+  if (!CADANGAN.includes(awal)) return { error: "Urutan tidak dikenal." };
+  const urutan = [awal, ...CADANGAN.filter((x) => x !== awal)].join(",");
   if (![gm, gmr].every((m) => /^gemini-[\w.-]{1,60}$/.test(m))) return { error: "Nama model Gemini tidak valid (contoh: gemini-3.6-flash)." };
   if (om && !modelGratis(om)) return { error: "Model OpenRouter harus model gratis (berakhiran :free)." };
-  if (!["gemini,openrouter", "openrouter,gemini"].includes(urutan)) return { error: "Urutan tidak dikenal." };
+  if (![gq, gqr].every(modelGroqValid)) return { error: "Nama model Groq tidak valid (contoh: llama-3.3-70b-versatile)." };
   await setSetting(prisma, "ai_claude_aktif", onOff("ai_claude_aktif"));
   await setSetting(prisma, "ai_gemini_aktif", onOff("ai_gemini_aktif"));
   await setSetting(prisma, "ai_openrouter_aktif", onOff("ai_openrouter_aktif"));
+  await setSetting(prisma, "ai_groq_aktif", onOff("ai_groq_aktif"));
+  await setSetting(prisma, "ai_groq_auto", onOff("ai_groq_auto"));
+  await setSetting(prisma, "ai_groq_model", gq);
+  await setSetting(prisma, "ai_groq_model_ringan", gqr);
   await setSetting(prisma, "ai_gemini_auto", onOff("ai_gemini_auto"));
   await setSetting(prisma, "ai_openrouter_auto", onOff("ai_openrouter_auto"));
   await setSetting(prisma, "ai_gemini_model", gm);

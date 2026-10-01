@@ -6,13 +6,14 @@ import { getSetting, getSettingNumber } from "../services/settings";
 import { adaLoginFolder, JENDELA, penjalanCli, type AlasanGagal, type HasilClaude, type InfoBatas, type JendelaBatas, type NamaJendela, type Penjalan } from "./claude";
 import { dekripsi, enkripsi, samarkan } from "./rahasia";
 import { adaLoginGemini, daftarModelGeminiCache, penjalanGeminiOtomatis, segarkanDaftarGemini, type PenjalanGemini } from "./gemini";
+import { daftarModelGroqCache, modelGroqValid, penjalanGroq, segarkanDaftarGroq, type PenjalanGroq } from "./groq";
 import { daftarModelGratis, modelGratis, penjalanOpenRouter, type PenjalanOpenRouter } from "./openrouter";
-import { bacaStatistik, calonGemini, catatModel, jenisGagal, sedangDitahan, urutkanModel } from "./modelOtomatis";
+import { bacaStatistik, calonGemini, calonGroq, catatModel, jenisGagal, sedangDitahan, urutkanModel } from "./modelOtomatis";
 
-export type Penyedia = "claude" | "gemini" | "openrouter";
-export const CADANGAN = ["gemini", "openrouter"] as const;
+export type Penyedia = "claude" | "gemini" | "openrouter" | "groq";
+export const CADANGAN = ["gemini", "openrouter", "groq"] as const;
 export type PenyediaCadangan = (typeof CADANGAN)[number];
-export const LABEL_PENYEDIA: Record<Penyedia, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter" };
+export const LABEL_PENYEDIA: Record<Penyedia, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter", groq: "Groq" };
 /** Hasil panggilan beserta penyedia yang akhirnya menjawab. */
 export type HasilAI = HasilClaude & { penyedia?: Penyedia; /** model yang benar-benar dipakai */ model?: string };
 
@@ -270,6 +271,7 @@ export interface PermintaanAI {
 export function modelValid(p: Penyedia, m: string): boolean {
   if (p === "gemini") return /^gemini-[\w.-]{1,60}$/.test(m);
   if (p === "openrouter") return modelGratis(m);
+  if (p === "groq") return modelGroqValid(m);
   return /^[\w.\-[\]]{1,60}$/.test(m);
 }
 
@@ -311,6 +313,7 @@ export async function panggilAI(db: Db, r: PermintaanAI): Promise<HasilAI> {
   let pertama: HasilAI | null = null;
   let tercatat = false;
   for (const p of urutan) {
+    if (r.gambar && p === "groq" && !r.penyedia) continue; // Groq tidak dipakai untuk gambar: lewati ke penyedia berikutnya
     const c: HasilCoba = p === "claude" ? await cobaClaude(db, r, !tercatat, adaCadangan) : await cobaCadangan(db, p, r, !tercatat);
     tercatat ||= c.tercatat;
     if (c.hasil.ok) return { ...c.hasil, penyedia: p, model: c.model };
@@ -432,18 +435,21 @@ export async function cekPulihAI(db: Db, now: Date): Promise<boolean> {
 
 let penjalanGemini: PenjalanGemini = penjalanGeminiOtomatis;
 let penjalanOR: PenjalanOpenRouter = penjalanOpenRouter;
+let penjalanGroqFn: PenjalanGroq = penjalanGroq;
 /** Ganti penjalan cadangan (dipakai tes). */
-export function setPenjalanCadangan(p: { gemini?: PenjalanGemini; openrouter?: PenjalanOpenRouter }): () => void {
-  const lama = { g: penjalanGemini, o: penjalanOR };
+export function setPenjalanCadangan(p: { gemini?: PenjalanGemini; openrouter?: PenjalanOpenRouter; groq?: PenjalanGroq }): () => void {
+  const lama = { g: penjalanGemini, o: penjalanOR, q: penjalanGroqFn };
   if (p.gemini) penjalanGemini = p.gemini;
   if (p.openrouter) penjalanOR = p.openrouter;
+  if (p.groq) penjalanGroqFn = p.groq;
   return () => {
     penjalanGemini = lama.g;
     penjalanOR = lama.o;
+    penjalanGroqFn = lama.q;
   };
 }
 
-const ENV_KUNCI: Record<PenyediaCadangan, string> = { gemini: "GEMINI_API_KEY", openrouter: "OPENROUTER_API_KEY" };
+const ENV_KUNCI: Record<PenyediaCadangan, string> = { gemini: "GEMINI_API_KEY", openrouter: "OPENROUTER_API_KEY", groq: "GROQ_API_KEY" };
 
 /** API key cadangan: dari website (terenkripsi) atau .env; Gemini juga bisa lewat login Google di folder bot. */
 export async function kunciCadangan(db: Db, p: PenyediaCadangan): Promise<{ kunci: string | null; sumber: "website" | "env" | "login" | null; rusak: boolean }> {
@@ -550,6 +556,14 @@ async function modelCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, kunci
     const calon = calonGemini(!!r.ringan, utama || undefined, ditemukan);
     return { daftar: urutkanModel("gemini", calon, utama || undefined, stat, r.now), otomatis: true };
   }
+  if (p === "groq") {
+    const utama = await getSetting(db, r.ringan ? "ai_groq_model_ringan" : "ai_groq_model");
+    if ((await getSetting(db, "ai_groq_auto")) === "0") return { daftar: utama ? [utama] : [], otomatis: false };
+    // daftar model dari Groq dimuat di latar belakang (tidak pernah menunda balasan); sebelum siap dipakai daftar tetap
+    const ditemukan = daftarModelGroqCache();
+    if (!ditemukan && kunci) segarkanDaftarGroq(kunci);
+    return { daftar: urutkanModel("groq", calonGroq(!!r.ringan, utama || undefined, ditemukan), utama || undefined, stat, r.now), otomatis: true };
+  }
   const pilih = await getSetting(db, "ai_openrouter_model");
   const auto = (await getSetting(db, "ai_openrouter_auto")) !== "0";
   if (pilih) {
@@ -581,7 +595,7 @@ async function cobaCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, utama:
     tambahanDimuat = true;
     antrian.push(...(await rencana.muatTambahan().catch(() => [])));
   }
-  if (!antrian.length) return tidak("gagal", p === "openrouter" ? "Belum ada model gratis OpenRouter yang cocok." : "Model Gemini belum diatur.");
+  if (!antrian.length) return tidak("gagal", p === "openrouter" ? "Belum ada model gratis OpenRouter yang cocok." : `Model ${LABEL_PENYEDIA[p]} belum diatur.`);
 
   const log = await db.aiCall.create({ data: { waktu: r.now, fitur: r.fitur, penyedia: p, utama, model: antrian[0], status: "berjalan" } });
   let hasil: HasilClaude = gagal("gagal", "Tidak ada model yang dicoba.");
@@ -601,7 +615,7 @@ async function cobaCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, utama:
     model = m;
     try {
       const dasar = { system: r.system, prompt: r.prompt, model: m, gambar: r.gambar, timeoutMs: otomatis ? Math.min(batasTotal, TIMEOUT_PER_MODEL_MS) : r.timeoutMs };
-      hasil = await (p === "gemini" ? slot(() => penjalanGemini({ ...dasar, apiKey: k.kunci })) : penjalanOR({ ...dasar, apiKey: k.kunci! }));
+      hasil = await (p === "gemini" ? slot(() => penjalanGemini({ ...dasar, apiKey: k.kunci })) : p === "groq" ? penjalanGroqFn({ ...dasar, apiKey: k.kunci! }) : penjalanOR({ ...dasar, apiKey: k.kunci! }));
     } catch (e) {
       hasil = gagal("gagal", e instanceof Error ? e.message : String(e));
     }
@@ -656,7 +670,7 @@ export async function statusCadangan(db: Db) {
         getSetting(db, `ai_${p}_aktif`),
         kunciCadangan(db, p),
         bacaStatusCadangan(db, p),
-        getSetting(db, p === "gemini" ? "ai_gemini_model" : "ai_openrouter_model"),
+        getSetting(db, `ai_${p}_model`),
       ]);
       const ada = !!k.kunci || k.sumber === "login";
       const kondisi: KondisiAI = !ada ? "belum_diatur" : st.status;
