@@ -268,6 +268,8 @@ claude setup-token                               # login di browser pakai akun C
 
 Tempel token di website → **Koneksi → Claude** → *Simpan & tes*. Status berubah jadi **Aktif**.
 
+> **Pakai Claude Code yang masih baru.** Bar batas sesi 5 jam & mingguan dibaca dari `unifiedWindows` di `rate_limit_event`. Versi lama (contoh: 2.1.197) hanya mengirim status + jam reset tanpa persentase, jadi bar kosong padahal AI jalan normal; versi 2.1.286 sudah mengirimnya. Bot mematikan auto-update (`DISABLE_AUTOUPDATER=1`), jadi `claude` di server tidak naik sendiri: perbarui manual (`npm i -g @anthropic-ai/claude-code@latest`), atau pasang di folder khusus bot lalu isi `CLAUDE_BIN=` di `.env` dengan path lengkapnya supaya `claude` global orang lain tidak ikut berubah.
+
 **Server dipakai bareng orang lain?** Aman dari login/logout orang lain:
 
 - Bot memakai token miliknya sendiri dan folder konfigurasi khusus (`data/claude-config`), jadi `claude` login/logout di terminal oleh siapa pun tidak berpengaruh, dan bot tidak pernah memakai akun orang lain.
