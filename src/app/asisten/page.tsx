@@ -10,6 +10,8 @@ import { prisma } from "@/lib/db";
 import { getAllSettings } from "@/lib/services/settings";
 import { statusAI } from "@/lib/ai/panggil";
 import { pesanAIMati } from "@/lib/ai/asisten";
+import { MODEL_CLAUDE, MODEL_GEMINI, denganAktif, type OpsiPenyedia } from "@/lib/ai/model";
+import { daftarModelGratis } from "@/lib/ai/openrouter";
 import { hapusKataAction, ingatAction, lupakanAction, simpanPengaturanAIAction } from "../actions-ai";
 
 export const metadata = { title: "Asisten AI" };
@@ -24,13 +26,23 @@ const MODEL = [
 
 export default async function AsistenPage() {
   const now = new Date();
-  const [st, s, chat, memori, kata] = await Promise.all([
+  const [st, s, chat, memori, kata, modelGratis] = await Promise.all([
     statusAI(prisma, now),
     getAllSettings(prisma),
     prisma.aiChat.findMany({ where: { kanal: "web", waktu: { gte: new Date(now.getTime() - 6 * 3600_000) } }, orderBy: { id: "desc" }, take: 20 }),
     prisma.aiMemori.findMany({ orderBy: { id: "asc" } }),
     prisma.kataKategori.findMany({ orderBy: { dibuatPada: "desc" }, take: 30 }),
+    daftarModelGratis().catch(() => []),
   ]);
+  // penyedia yang sudah tersambung dan bisa dipilih di kotak chat
+  const ada = (k: "gemini" | "openrouter") => st.cadangan.some((c) => c.penyedia === k && c.ada);
+  const opsi: OpsiPenyedia[] = [
+    ...(st.token.ada ? [{ kode: "claude" as const, label: "Claude", modelDefault: s.ai_model, model: denganAktif(MODEL_CLAUDE, s.ai_model) }] : []),
+    ...(ada("gemini") ? [{ kode: "gemini" as const, label: "Gemini", modelDefault: s.ai_gemini_model, model: denganAktif(MODEL_GEMINI, s.ai_gemini_model) }] : []),
+    ...(ada("openrouter")
+      ? [{ kode: "openrouter" as const, label: "OpenRouter (gratis)", modelDefault: s.ai_openrouter_model || "otomatis", model: denganAktif(modelGratis.map((m) => ({ v: m.id, l: m.gambar ? `${m.id} · bisa baca gambar` : m.id })), s.ai_openrouter_model) }]
+      : []),
+  ];
   const tone = nadaStatus(st);
   const riwayat = chat.reverse().map((c) => ({
     peran: c.peran === "user" ? ("user" as const) : ("asisten" as const),
@@ -54,7 +66,7 @@ export default async function AsistenPage() {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         <Card className="lg:col-span-2" title="Ngobrol" icon="bot">
-          <AsistenChat riwayat={riwayat} siap={st.siap} pesanMati={st.siap ? null : pesanAIMati(st.kondisi === "belum_dicek" || st.kondisi === "ok" ? "gagal" : st.kondisi)} />
+          <AsistenChat riwayat={riwayat} siap={st.siap} opsi={opsi} pesanMati={st.siap ? null : pesanAIMati(st.kondisi === "belum_dicek" || st.kondisi === "ok" ? "gagal" : st.kondisi)} />
         </Card>
 
         <div className="space-y-5">

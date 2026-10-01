@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { jalankanAksiAction, resetObrolanAction, tanyaAsistenAction } from "@/app/actions-ai";
 import type { AksiAI } from "@/lib/ai/asisten";
+import type { KodePenyedia, OpsiPenyedia } from "@/lib/ai/model";
 import { rp } from "@/lib/money";
 import { Icon, type IconName } from "./icons";
 
@@ -13,7 +14,13 @@ interface Pesan {
   memori?: string[];
   gagal?: boolean;
   penyedia?: string;
+  model?: string;
+  /** penyedia dipilih eksplisit (bukan otomatis + cadangan) */
+  dipilih?: boolean;
 }
+
+const NAMA_PENYEDIA: Record<string, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter" };
+const KUNCI_PILIHAN = "dk-ai-pilihan";
 
 const NAMA: Record<string, string> = { makan: "Makan", data: "Paket data", paylater: "Paylater", kado: "Tabungan kado", darurat: "Darurat & kos" };
 
@@ -55,18 +62,47 @@ function TeksWA({ teks }: { teks: string }) {
   );
 }
 
-export default function AsistenChat({ riwayat, siap, pesanMati }: { riwayat: Pesan[]; siap: boolean; pesanMati: string | null }) {
+export default function AsistenChat({ riwayat, siap, pesanMati, opsi }: { riwayat: Pesan[]; siap: boolean; pesanMati: string | null; opsi: OpsiPenyedia[] }) {
   const [pesan, setPesan] = useState<Pesan[]>(riwayat);
   const [input, setInput] = useState("");
   const [mikir, startMikir] = useTransition();
   const [jalan, startJalan] = useTransition();
   const [pilihan, setPilihan] = useState<boolean[]>([]);
+  // pilihan penyedia & model untuk pesan berikutnya ("" = otomatis: Claude dulu, cadangan kalau Claude nggak bisa)
+  const [penyedia, setPenyedia] = useState<"" | KodePenyedia>("");
+  const [model, setModel] = useState("");
+  const dipilih = opsi.find((o) => o.kode === penyedia) ?? null;
+  // kalau penyedia dipilih eksplisit, kotak chat tetap aktif walau mode otomatis lagi tidak siap
+  const bisa = siap || !!dipilih;
   const akhir = useRef<HTMLDivElement>(null);
   const usulan = pesan.length && pesan[pesan.length - 1].aksi?.length ? pesan[pesan.length - 1].aksi! : null;
 
   useEffect(() => {
     akhir.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [pesan, mikir]);
+
+  // ingat pilihan terakhir di browser ini (kenyamanan saja; kalau penyimpanan diblokir, tetap jalan)
+  useEffect(() => {
+    try {
+      const j = JSON.parse(localStorage.getItem(KUNCI_PILIHAN) ?? "null") as { p?: string; m?: string } | null;
+      const o = opsi.find((x) => x.kode === j?.p);
+      if (o) {
+        setPenyedia(o.kode);
+        setModel(o.model.some((m) => m.v === j?.m) ? (j?.m ?? "") : "");
+      }
+    } catch {
+      /* abaikan */
+    }
+  }, [opsi]);
+  const simpanPilihan = (p: "" | KodePenyedia, m: string) => {
+    setPenyedia(p);
+    setModel(m);
+    try {
+      localStorage.setItem(KUNCI_PILIHAN, JSON.stringify({ p, m }));
+    } catch {
+      /* abaikan */
+    }
+  };
 
   const kirim = (teks: string) => {
     const t = teks.trim();
@@ -75,8 +111,8 @@ export default function AsistenChat({ riwayat, siap, pesanMati }: { riwayat: Pes
     setPesan((p) => [...p, { peran: "user", isi: t }]);
     startMikir(async () => {
       try {
-        const r = await tanyaAsistenAction(t);
-        setPesan((p) => [...p, { peran: "asisten", isi: r.balasan, aksi: r.aksi, memori: r.memori, gagal: !r.ok, penyedia: r.penyedia }]);
+        const r = await tanyaAsistenAction(t, penyedia ? { penyedia, model: model || undefined } : undefined);
+        setPesan((p) => [...p, { peran: "asisten", isi: r.balasan, aksi: r.aksi, memori: r.memori, gagal: !r.ok, penyedia: r.penyedia, model: r.model, dipilih: r.dipilih }]);
         setPilihan(r.aksi.map(() => true));
       } catch {
         setPesan((p) => [...p, { peran: "asisten", isi: "Gagal menghubungi server. Coba lagi.", gagal: true }]);
@@ -106,7 +142,7 @@ export default function AsistenChat({ riwayat, siap, pesanMati }: { riwayat: Pes
             <p className="text-sm text-muted">Tanya apa aja soal duit lo. Asisten baca saldo amplop, tagihan, target kado, dan riwayat transaksi lo (data dihitung sistem, bukan dikarang AI).</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {CONTOH.map((c) => (
-                <button key={c.teks} type="button" onClick={() => kirim(c.teks)} disabled={!siap || mikir} className="flex items-start gap-2 rounded-xl border border-line bg-card p-3 text-left text-sm hover:border-line-strong disabled:opacity-50">
+                <button key={c.teks} type="button" onClick={() => kirim(c.teks)} disabled={!bisa || mikir} className="flex items-start gap-2 rounded-xl border border-line bg-card p-3 text-left text-sm hover:border-line-strong disabled:opacity-50">
                   <Icon name={c.ikon} size={17} className="mt-px shrink-0 text-brand" />
                   {c.teks}
                 </button>
@@ -128,10 +164,12 @@ export default function AsistenChat({ riwayat, siap, pesanMati }: { riwayat: Pes
                 <div className={`rounded-2xl rounded-tl-md px-3.5 py-2.5 text-sm leading-relaxed ${m.gagal ? "bg-warn-bg text-warn" : "bg-subtle"}`}>
                   <TeksWA teks={m.isi} />
                 </div>
-                {m.penyedia && m.penyedia !== "claude" && (
+                {m.penyedia && (m.dipilih || m.penyedia !== "claude") && !m.gagal && (
                   <p className="flex items-center gap-1.5 text-xs text-muted">
                     <Icon name="transfer" size={13} />
-                    Dijawab lewat {m.penyedia === "gemini" ? "Gemini" : "OpenRouter"} (cadangan)
+                    Dijawab lewat {NAMA_PENYEDIA[m.penyedia] ?? m.penyedia}
+                    {m.model ? ` · ${m.model}` : ""}
+                    {m.dipilih ? "" : " (cadangan)"}
                   </p>
                 )}
                 {m.memori?.map((x) => (
@@ -184,11 +222,41 @@ export default function AsistenChat({ riwayat, siap, pesanMati }: { riwayat: Pes
         <div ref={akhir} />
       </div>
 
-      {!siap && pesanMati && (
+      {!bisa && pesanMati && (
         <p className="mb-2 flex items-start gap-2 rounded-xl bg-warn-bg px-3 py-2 text-sm text-warn">
           <Icon name="alert" size={16} className="mt-0.5 shrink-0" />
           {pesanMati}
         </p>
+      )}
+      {opsi.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3 text-sm">
+          <label htmlFor="pilih-penyedia" className="text-muted">
+            Dijawab oleh
+          </label>
+          <select id="pilih-penyedia" value={penyedia} onChange={(e) => simpanPilihan(e.target.value as "" | KodePenyedia, "")} className="input !min-h-9 !w-auto !py-1">
+            <option value="">Otomatis (Claude dulu, cadangan kalau error)</option>
+            {opsi.map((o) => (
+              <option key={o.kode} value={o.kode}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {dipilih && (
+            <>
+              <label htmlFor="pilih-model" className="sr-only">
+                Model
+              </label>
+              <select id="pilih-model" value={model} onChange={(e) => simpanPilihan(penyedia, e.target.value)} className="input !min-h-9 !w-auto max-w-full !py-1">
+                <option value="">Model bawaan ({dipilih.modelDefault})</option>
+                {dipilih.model.map((m) => (
+                  <option key={m.v} value={m.v}>
+                    {m.l}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+        </div>
       )}
       <form
         onSubmit={(e) => {
@@ -212,11 +280,11 @@ export default function AsistenChat({ riwayat, siap, pesanMati }: { riwayat: Pes
           }}
           rows={1}
           maxLength={2000}
-          placeholder={siap ? "Tanya atau cerita apa aja…" : "Asisten belum aktif"}
-          disabled={!siap}
+          placeholder={bisa ? "Tanya atau cerita apa aja…" : "Asisten belum aktif"}
+          disabled={!bisa}
           className="input max-h-40 min-h-11 flex-1 resize-y"
         />
-        <button className="btn min-h-11 !px-3" disabled={!siap || mikir || !input.trim()} aria-label="Kirim">
+        <button className="btn min-h-11 !px-3" disabled={!bisa || mikir || !input.trim()} aria-label="Kirim">
           <Icon name="send" size={18} />
         </button>
       </form>
