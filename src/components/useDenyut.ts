@@ -37,6 +37,17 @@ const POLL_MS = 1500;
 
 const WA = "var(--ok)";
 const CLAUDE = "var(--claude)";
+const WARNA_PENYEDIA: Record<string, string> = { claude: CLAUDE, gemini: "var(--series-1)", openrouter: "var(--series-5)" };
+const NAMA_PENYEDIA: Record<string, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter" };
+
+/** Panggilan AI yang sedang berjalan: penyedia + fitur. */
+export interface Berjalan {
+  penyedia: string;
+  fitur: string;
+}
+// Claude terhubung ke node fitur; cadangan langsung ke DompetKos
+const pergi = (p: string, f: string): [string, string][] => (p === "claude" ? [["hub", "claude"], ["claude", f]] : [["hub", p]]);
+const pulang = (p: string, f: string): [string, string][] => (p === "claude" ? [[f, "claude"], ["claude", "hub"]] : [[p, "hub"]]);
 const MERAH = "var(--bad)";
 
 /**
@@ -45,11 +56,11 @@ const MERAH = "var(--bad)";
  */
 export function useDenyut() {
   const [jejak, setJejak] = useState<Jejak[]>([]);
-  const [berjalan, setBerjalan] = useState<Map<number, string>>(new Map());
+  const [berjalan, setBerjalan] = useState<Map<number, Berjalan>>(new Map());
   const [log, setLog] = useState<LogLive[]>([]);
   const [waktu, setWaktu] = useState(0);
   const kursor = useRef<{ pesan?: number; ai?: number }>({});
-  const jalanRef = useRef(new Map<number, string>());
+  const jalanRef = useRef(new Map<number, Berjalan>());
   const nomor = useRef(0);
   const antre = useRef(0);
   const hemat = useRef(false);
@@ -131,27 +142,39 @@ export function useDenyut() {
 
       const jalan = new Map(jalanRef.current);
       for (const c of d.ai) {
-        const label = LABEL[c.fitur] ?? c.fitur;
+        const label = `${NAMA_PENYEDIA[c.penyedia] ?? c.penyedia}: ${LABEL[c.fitur] ?? c.fitur}`;
+        const warna = WARNA_PENYEDIA[c.penyedia] ?? CLAUDE;
         if (c.status === "berjalan") {
-          jalan.set(c.id, c.fitur);
-          if (!pertama) kirim([["hub", "claude"], ["claude", c.fitur]], CLAUDE);
-          catat({ waktu: new Date(), ikon: "bot", teks: `Claude: ${label} · lagi mikir…`, nada: "claude" });
+          jalan.set(c.id, { penyedia: c.penyedia, fitur: c.fitur });
+          if (!pertama) kirim(pergi(c.penyedia, c.fitur), warna);
+          catat({ waktu: new Date(), ikon: "bot", teks: `${label} · lagi mikir…`, nada: "claude" });
         } else {
           // sudah selesai sebelum sempat terlihat berjalan: tampilkan pergi-pulang sekaligus
-          kirim([["hub", "claude"], ["claude", c.fitur], [c.fitur, "claude"], ["claude", "hub"]], c.status === "ok" ? CLAUDE : MERAH);
-          catat({ waktu: new Date(), ikon: c.status === "ok" ? "check-circle" : "alert", teks: `Claude: ${label} · ${c.status === "ok" ? "berhasil" : "gagal"}`, nada: c.status === "ok" ? "claude" : "bad" });
+          kirim([...pergi(c.penyedia, c.fitur), ...pulang(c.penyedia, c.fitur)], c.status === "ok" ? warna : MERAH);
+          catat({ waktu: new Date(), ikon: c.status === "ok" ? "check-circle" : "alert", teks: `${label} · ${c.status === "ok" ? "berhasil" : "gagal"}`, nada: c.status === "ok" ? "claude" : "bad" });
         }
       }
       for (const c of d.cek) {
         if (c.status === "berjalan") continue;
-        const fitur = jalan.get(c.id);
+        const j = jalan.get(c.id);
         jalan.delete(c.id);
-        if (!fitur) continue;
-        kirim([[fitur, "claude"], ["claude", "hub"]], c.status === "ok" ? CLAUDE : MERAH);
-        catat({ waktu: new Date(), ikon: c.status === "ok" ? "check-circle" : "alert", teks: `Claude: ${LABEL[fitur] ?? fitur} · ${c.status === "ok" ? "selesai" : c.status === "terputus" ? "terputus" : "gagal"}`, nada: c.status === "ok" ? "claude" : "bad" });
+        if (!j) continue;
+        kirim(pulang(j.penyedia, j.fitur), c.status === "ok" ? (WARNA_PENYEDIA[j.penyedia] ?? CLAUDE) : MERAH);
+        catat({
+          waktu: new Date(),
+          ikon: c.status === "ok" ? "check-circle" : "alert",
+          teks: `${NAMA_PENYEDIA[j.penyedia] ?? j.penyedia}: ${LABEL[j.fitur] ?? j.fitur} · ${c.status === "ok" ? "selesai" : c.status === "terputus" ? "terputus" : "gagal"}`,
+          nada: c.status === "ok" ? "claude" : "bad",
+        });
       }
-      // selama Claude masih mikir, titik terus mengalir ke Claude & fitur yang dipakai
-      if (!pertama) for (const f of new Set(jalan.values())) if (!d.ai.some((c) => c.fitur === f)) kirim([["hub", "claude"], ["claude", f]], CLAUDE);
+      // selama AI masih mikir, titik terus mengalir ke penyedia (& fitur) yang dipakai
+      if (!pertama) {
+        const kunci = new Set([...jalan.values()].map((j) => `${j.penyedia}|${j.fitur}`));
+        for (const k of kunci) {
+          const [p, f] = k.split("|");
+          if (!d.ai.some((c) => c.penyedia === p && c.fitur === f)) kirim(pergi(p, f), WARNA_PENYEDIA[p] ?? CLAUDE);
+        }
+      }
       jalanRef.current = jalan;
       setBerjalan(jalan);
     };

@@ -297,6 +297,13 @@ Tempel token di website → **Koneksi → Claude** → *Simpan & tes*. Status be
 
 Kalimat yang dipahami perintah biasa tetap diproses instan tanpa AI (hemat kuota). Kata baru (mis. "seblak") ditebak amplopnya oleh AI dengan model ringan, lalu **dipelajari**: lain kali langsung dikenali tanpa AI. Rekap Sabtu mendapat evaluasi & satu tantangan minggu depan.
 
+**AI cadangan (gratis, otomatis):** kalau Claude kena batas, tokennya ditolak, atau error, asisten pindah ke cadangan sesuai urutan (Koneksi → AI cadangan), dan balasannya diberi tanda "lewat Gemini/OpenRouter".
+
+- **Gemini** lewat **Gemini CLI** resmi Google (`npm i -g @google/gemini-cli`). Sambungkan dengan salah satu: login akun Google sekali di folder bot (`HOME=$PWD/data/gemini-home NO_BROWSER=true gemini` → *Login with Google*), atau API key gratis dari Google AI Studio yang ditempel di website. Isolasinya sama dengan Claude: folder khusus bot, lingkungan proses bersih, hanya tool baca file (web, shell, tulis file dimatikan).
+- **OpenRouter**: hanya model **gratis** (`:free`); model berbayar ditolak sebelum dikirim. Model dipilih dari daftar model gratis (diambil langsung dari OpenRouter) atau otomatis. Batas gratis sekitar 50 permintaan/hari.
+- **Antigravity tidak dipakai**: aplikasi itu tidak punya cara resmi dipanggil dari aplikasi lain, dan alat tidak resmi yang "meminjam" kuotanya melanggar aturan Google (akun bisa diblokir). Gemini CLI memakai akun Google yang sama secara resmi.
+- Privasi: di paket gratis, Google dan sebagian penyedia model gratis OpenRouter bisa memakai data yang dikirim untuk melatih model. Matikan cadangan kalau tidak mau.
+
 **Aturan main:**
 
 - AI **tidak bisa mengubah data sendiri**. Semua aksi (catat, pindah, daftar belanja, pesan ke ortu) hanya usulan, jalan setelah `ok`, tercatat di Aktivitas, dan bisa di-`batal`. Usulan divalidasi ulang di server (nominal wajar, amplop valid, tabungan kado tidak boleh diambil).

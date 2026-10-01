@@ -6,7 +6,8 @@ import { prisma } from "@/lib/db";
 import { AKTOR_WEB } from "@/lib/services/activity-log";
 import { setSetting } from "@/lib/services/settings";
 import { hapusRiwayat, ingat, jalankanAksiAI, lupakan, tanyaAsisten, validasiAksi, type AksiAI } from "@/lib/ai/asisten";
-import { LABEL_KONDISI, simpanTokenAI, tesKoneksiAI } from "@/lib/ai/panggil";
+import { CADANGAN, LABEL_KONDISI, LABEL_PENYEDIA, simpanKunciCadangan, simpanTokenAI, tesKoneksiAI, type PenyediaCadangan } from "@/lib/ai/panggil";
+import { modelGratis } from "@/lib/ai/openrouter";
 import type { FormState } from "./actions";
 
 const KANAL_WEB = "web";
@@ -17,6 +18,7 @@ export interface JawabanState {
   balasan: string;
   aksi: AksiAI[];
   memori: string[];
+  penyedia?: string;
 }
 
 export async function tanyaAsistenAction(pesan: string): Promise<JawabanState> {
@@ -25,7 +27,7 @@ export async function tanyaAsistenAction(pesan: string): Promise<JawabanState> {
   if (!p) return { ok: false, balasan: "Tulis pertanyaannya dulu.", aksi: [], memori: [] };
   const r = await tanyaAsisten(prisma, { kanal: KANAL_WEB, pesan: p, now: new Date() });
   if (r.memori.length) revalidatePath("/asisten");
-  return { ok: r.ok, balasan: r.balasan, aksi: r.aksi, memori: r.memori };
+  return { ok: r.ok, balasan: r.balasan, aksi: r.aksi, memori: r.memori, penyedia: r.penyedia };
 }
 
 export async function jalankanAksiAction(aksiMentah: unknown): Promise<{ berhasil: string[]; gagal: string[] }> {
@@ -118,4 +120,62 @@ export async function hapusKataAction(form: FormData) {
   await requireLogin();
   await prisma.kataKategori.deleteMany({ where: { kata: String(form.get("kata")) } });
   revalidatePath("/asisten");
+}
+
+// ---------------------------------------------------------------- penyedia cadangan
+
+const penyediaDari = (v: FormDataEntryValue | null): PenyediaCadangan | null => (CADANGAN.includes(v as PenyediaCadangan) ? (v as PenyediaCadangan) : null);
+
+export async function simpanKunciCadanganAction(_: FormState, form: FormData): Promise<FormState> {
+  await requireLogin();
+  const p = penyediaDari(form.get("penyedia"));
+  if (!p) return { error: "Penyedia tidak dikenal." };
+  const kunci = String(form.get("kunci") ?? "").trim();
+  if (!kunci) return { error: "Tempel API key-nya dulu." };
+  try {
+    await simpanKunciCadangan(prisma, p, kunci);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "API key tidak valid." };
+  }
+  const h = await tesKoneksiAI(prisma, new Date(), p);
+  revalidatePath("/", "layout");
+  return h.ok ? { ok: `API key ${LABEL_PENYEDIA[p]} tersimpan (terenkripsi) dan tersambung.` } : { error: `Tersimpan, tapi tes gagal: ${LABEL_KONDISI[h.ok ? "ok" : (h.alasan as keyof typeof LABEL_KONDISI)] ?? ""} ${h.ok ? "" : h.pesan}` };
+}
+
+export async function hapusKunciCadanganAction(form: FormData) {
+  await requireLogin();
+  const p = penyediaDari(form.get("penyedia"));
+  if (p) await simpanKunciCadangan(prisma, p, null);
+  revalidatePath("/", "layout");
+}
+
+export async function tesCadanganAction(_: FormState, form: FormData): Promise<FormState> {
+  await requireLogin();
+  const p = penyediaDari(form.get("penyedia"));
+  if (!p) return { error: "Penyedia tidak dikenal." };
+  const h = await tesKoneksiAI(prisma, new Date(), p);
+  revalidatePath("/", "layout");
+  if (h.ok) return { ok: `Tersambung ke ${LABEL_PENYEDIA[p]} (${(h.durasiMs / 1000).toFixed(1)} detik).` };
+  return { error: `${LABEL_KONDISI[h.alasan as keyof typeof LABEL_KONDISI] ?? "Gagal"}: ${h.pesan}` };
+}
+
+export async function simpanCadanganAction(_: FormState, form: FormData): Promise<FormState> {
+  await requireLogin();
+  const onOff = (k: string) => (form.get(k) === "on" ? "1" : "0");
+  const gm = String(form.get("ai_gemini_model") ?? "").trim();
+  const gmr = String(form.get("ai_gemini_model_ringan") ?? "").trim();
+  const om = String(form.get("ai_openrouter_model") ?? "").trim();
+  const urutan = String(form.get("ai_urutan_cadangan") ?? "gemini,openrouter");
+  if (![gm, gmr].every((m) => /^gemini-[\w.-]{1,60}$/.test(m))) return { error: "Nama model Gemini tidak valid (contoh: gemini-2.5-flash)." };
+  if (om && !modelGratis(om)) return { error: "Model OpenRouter harus model gratis (berakhiran :free)." };
+  if (!["gemini,openrouter", "openrouter,gemini"].includes(urutan)) return { error: "Urutan tidak dikenal." };
+  await setSetting(prisma, "ai_claude_aktif", onOff("ai_claude_aktif"));
+  await setSetting(prisma, "ai_gemini_aktif", onOff("ai_gemini_aktif"));
+  await setSetting(prisma, "ai_openrouter_aktif", onOff("ai_openrouter_aktif"));
+  await setSetting(prisma, "ai_gemini_model", gm);
+  await setSetting(prisma, "ai_gemini_model_ringan", gmr);
+  await setSetting(prisma, "ai_openrouter_model", om);
+  await setSetting(prisma, "ai_urutan_cadangan", urutan);
+  revalidatePath("/", "layout");
+  return { ok: "Pengaturan penyedia AI disimpan." };
 }

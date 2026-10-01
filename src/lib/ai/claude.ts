@@ -71,6 +71,9 @@ export type HasilClaude =
   | { ok: true; teks: string; durasiMs: number; token?: PemakaianToken; batas?: InfoBatas }
   | { ok: false; alasan: AlasanGagal; pesan: string; durasiMs: number; token?: PemakaianToken; batas?: InfoBatas };
 
+/** Hasil tanpa durasi (durasi diisi pemanggil); Omit per anggota union. */
+export type HasilTanpaDurasi = HasilClaude extends infer H ? (H extends unknown ? Omit<H, "durasiMs"> : never) : never;
+
 export type Penjalan = (p: PanggilanClaude & { token: string | null }) => Promise<HasilClaude>;
 
 export const CLAUDE_BIN = () => process.env.CLAUDE_BIN || "claude";

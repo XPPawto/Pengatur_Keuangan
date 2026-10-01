@@ -29,6 +29,8 @@ export interface DataKoneksi {
     /** persen terpakai langganan: sesi 5 jam & mingguan (null = belum ada data) */
     sesi5Jam: number | null;
     mingguan: number | null;
+    /** penyedia cadangan (Gemini, OpenRouter) */
+    cadangan: { penyedia: string; label: string; aktif: boolean; ada: boolean; siap: boolean; labelKondisi: string; model: string }[];
   };
   nomor: { pemilik: number; keluarga: number; labelKeluarga: string[] };
   fitur: { kode: FiturAI; label: string; hariIni: number; aktif: boolean }[];
@@ -69,6 +71,7 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
       batas: ai.pemakaian.batas,
       sesi5Jam: ai.langganan.find((j) => j.kode === "five_hour")?.persen ?? null,
       mingguan: ai.langganan.find((j) => j.kode === "seven_day")?.persen ?? null,
+      cadangan: ai.cadangan.map((c) => ({ penyedia: c.penyedia, label: c.label, aktif: c.aktif, ada: c.ada, siap: c.siap, labelKondisi: c.labelKondisi, model: c.model })),
     },
     nomor: {
       pemilik: aktif.filter((r) => r.peran === "pemilik").length,
@@ -152,8 +155,8 @@ export interface Denyut {
   kursor: { pesan: number; ai: number };
   /** pesan WhatsApp baru (tanpa isi) */
   pesan: { id: number; arah: "masuk" | "keluar"; peran: "pemilik" | "keluarga"; proaktif: boolean; waktu: string }[];
-  /** panggilan Claude baru (status bisa masih "berjalan") */
-  ai: { id: number; fitur: FiturAI; status: string; waktu: string }[];
+  /** panggilan AI baru (status bisa masih "berjalan"); penyedia: claude | gemini | openrouter */
+  ai: { id: number; fitur: FiturAI; penyedia: string; status: string; waktu: string }[];
   /** status terbaru panggilan yang ditanyakan klien (yang tadinya masih berjalan) */
   cek: { id: number; status: string }[];
 }
@@ -182,10 +185,10 @@ export async function denyutKoneksi(db: Db, now: Date, k: { pesan?: number; ai?:
   if (k.ai === undefined) {
     // halaman baru dibuka: tampilkan panggilan yang sedang berjalan
     const rows = await db.aiCall.findMany({ where: { status: "berjalan", waktu: { gte: new Date(now.getTime() - BERJALAN_MAKS_MS) } }, orderBy: { id: "asc" }, take: 5 });
-    out.ai = rows.map((c) => ({ id: c.id, fitur: c.fitur as FiturAI, status: c.status, waktu: c.waktu.toISOString() }));
+    out.ai = rows.map((c) => ({ id: c.id, fitur: c.fitur as FiturAI, penyedia: c.penyedia, status: c.status, waktu: c.waktu.toISOString() }));
   } else if (k.ai < kursor.ai) {
     const rows = await db.aiCall.findMany({ where: { id: { gt: k.ai } }, orderBy: { id: "asc" }, take: 20 });
-    out.ai = rows.map((c) => ({ id: c.id, fitur: c.fitur as FiturAI, status: c.status, waktu: c.waktu.toISOString() }));
+    out.ai = rows.map((c) => ({ id: c.id, fitur: c.fitur as FiturAI, penyedia: c.penyedia, status: c.status, waktu: c.waktu.toISOString() }));
   }
   if (k.cek?.length) {
     const rows = await db.aiCall.findMany({ where: { id: { in: k.cek.slice(0, 20) } }, select: { id: true, status: true, waktu: true } });
