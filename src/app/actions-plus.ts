@@ -19,6 +19,7 @@ import { deleteTransfer } from "@/lib/services/transfers";
 import { undoActivity } from "@/lib/services/undo";
 import { logActivity } from "@/lib/services/activity-log";
 import { getSetting } from "@/lib/services/settings";
+import { jenisGambar } from "@/lib/keamanan/gambar";
 import { statusAI } from "@/lib/ai/panggil";
 import { bacaFotoAI } from "@/lib/ai/asisten";
 import { ENVELOPE_KODE, type EnvelopeKode } from "@/lib/types";
@@ -217,6 +218,7 @@ export async function bacaStrukAction(_: StrukState, form: FormData): Promise<St
   if (!(file instanceof File) || file.size === 0) return { error: "Pilih foto struknya dulu." };
   if (file.size > 8 * 1024 * 1024) return { error: "Foto terlalu besar (maks 8 MB)." };
   const buffer = Buffer.from(await file.arrayBuffer());
+  if (!jenisGambar(buffer)) return { error: "File itu bukan foto (JPG/PNG/WEBP)." };
   const now = new Date();
   try {
     // Claude dulu (kalau aktif), OCR lokal sebagai cadangan

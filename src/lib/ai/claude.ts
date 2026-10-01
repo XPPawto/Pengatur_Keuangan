@@ -99,7 +99,8 @@ export function lingkunganProses(token: string | null): Record<string, string> {
 export function argumen(p: PanggilanClaude): string[] {
   // stream-json (+ --verbose) supaya ikut menerima rate_limit_event: pemakaian sesi 5 jam & mingguan
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--model", p.model, "--system-prompt", p.system, "--no-session-persistence", "--strict-mcp-config"];
-  if (p.gambar) args.push("--tools", "Read", "--allowedTools", "Read", "--max-turns", "4");
+  // foto: hanya tool Read, dan hanya untuk isi folder kerja foto itu; izin lain otomatis ditolak
+  if (p.gambar) args.push("--tools", "Read", "--allowedTools", "Read(./**)", "--permission-mode", "dontAsk", "--max-turns", "4");
   else args.push("--tools", "", "--max-turns", "1");
   return args;
 }
@@ -201,7 +202,7 @@ export const penjalanCli: Penjalan = (p) =>
     const selesai = (h: Omit<Extract<HasilClaude, { ok: false }>, "durasiMs"> | Omit<Extract<HasilClaude, { ok: true }>, "durasiMs">) =>
       resolve({ ...h, durasiMs: Date.now() - mulai } as HasilClaude);
 
-    const cwd = AI_WORK_DIR();
+    const cwd = p.gambar ? path.dirname(p.gambar) : AI_WORK_DIR();
     try {
       fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
       fs.mkdirSync(AI_CONFIG_DIR(), { recursive: true, mode: 0o700 });

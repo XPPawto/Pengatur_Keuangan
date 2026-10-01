@@ -9,6 +9,7 @@ import { kirimAntrean } from "../src/lib/services/sender";
 import { backupDatabase, listBackups } from "../src/lib/services/backup";
 import { alarmKesehatan } from "../src/lib/services/health";
 import { cekPulihAI } from "../src/lib/ai/panggil";
+import { kunciBerkas } from "../src/lib/keamanan/berkas";
 import { wibWeekday } from "../src/lib/time";
 
 process.env.TZ = "Asia/Jakarta";
@@ -16,6 +17,8 @@ process.env.TZ = "Asia/Jakarta";
 const log = (m: string) => console.log(`[bot] ${m}`);
 
 async function main() {
+  // data hanya boleh dibaca user yang menjalankan bot (server dipakai bersama)
+  for (const p of kunciBerkas()) log(`peringatan keamanan: ${p}`);
   if (ownerNumbers().length === 0) {
     console.error("OWNER_WA_NUMBERS kosong di .env. Bot tidak akan menerima pesan dari siapa pun.");
   }

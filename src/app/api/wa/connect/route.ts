@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isLoggedIn } from "@/lib/auth/session";
+import { asalSama } from "@/lib/keamanan/asal";
 import { prisma } from "@/lib/db";
 import { isOwner, normalizePhone } from "@/lib/whitelist";
 
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic";
 /** Minta bot worker memulai pairing: { mode: "qr" } atau { mode: "code", phone: "08..." } */
 export async function POST(req: Request) {
   if (!(await isLoggedIn())) return NextResponse.json({ error: "Belum login" }, { status: 401 });
+  if (!asalSama(req)) return NextResponse.json({ error: "Asal permintaan tidak sah" }, { status: 403 });
   const body = (await req.json().catch(() => ({}))) as { mode?: string; phone?: string };
 
   const conn = await prisma.waConnection.findUnique({ where: { id: 1 } });

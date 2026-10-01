@@ -16,6 +16,8 @@ import { kalimatBebas, parseMessage } from "@/lib/parser/message";
 import { resetDb } from "./helpers";
 
 const db = new PrismaClient();
+/** isi file JPEG minimal (magic bytes) untuk tes foto */
+const FOTO = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0]);
 const ABDUL = "085163544535";
 const ORTU = "628979936381";
 const at = (tgl: string, jam = 12, menit = 0) => fromWib(tgl, jam, menit);
@@ -481,7 +483,7 @@ describe("bot WhatsApp + asisten", () => {
       expect(p.gambar).toBeTruthy();
       return json({ jenis: "struk", toko: "Indomaret", tanggal: "2026-10-05", total: 23500, items: [{ nama: "telur", harga: 14000, amplop: "makan" }, { nama: "tempe", harga: 5000, amplop: "makan" }, { nama: "sabun", harga: 4500, amplop: "darurat" }] });
     };
-    const [r] = await handleMessage(db, { nomor: ABDUL, text: "", now: at("2026-10-05"), gambar: async () => Buffer.from("foto") });
+    const [r] = await handleMessage(db, { nomor: ABDUL, text: "", now: at("2026-10-05"), gambar: async () => FOTO });
     expect(r).toContain("(dibaca AI)");
     expect(r).toContain("total Rp23.500");
     await kirim("rinci", at("2026-10-05"));
@@ -497,7 +499,7 @@ describe("bot WhatsApp + asisten", () => {
     await mulai4Okt();
     await sambung();
     jawab = () => json({ jenis: "bukti_transfer", nominal: 100000, pengirim: "Ayah", keterangan: "Transfer BRI" });
-    const [r] = await handleMessage(db, { nomor: ABDUL, text: "", now: at("2026-10-05"), gambar: async () => Buffer.from("foto") });
+    const [r] = await handleMessage(db, { nomor: ABDUL, text: "", now: at("2026-10-05"), gambar: async () => FOTO });
     expect(r).toContain("Bukti transfer Rp100.000 dari Ayah kebaca");
     await kirim("ok", at("2026-10-05"));
     expect(await db.extraIncome.findFirst()).toMatchObject({ dari: "Ayah", nominal: 100000 });
@@ -511,7 +513,7 @@ describe("bot WhatsApp + asisten", () => {
       nomor: ABDUL,
       text: "",
       now: at("2026-10-05"),
-      gambar: async () => Buffer.from("foto"),
+      gambar: async () => FOTO,
       ocr: async () => "INDOMARET\nTEMPE 5.000\nTOTAL 5.000",
     });
     expect(r).toContain("total Rp5.000");

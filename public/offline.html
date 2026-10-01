@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<title>Offline · DompetKos</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#0e1726; --muted:#6b7686; --brand:#0f766e; --line:#e4e7ec; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0c1117; --card:#131a22; --fg:#e8edf3; --muted:#8a96a5; --brand:#2dd4bf; --line:#232d38; } }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:24px;
+    padding-top:max(24px, env(safe-area-inset-top)); padding-bottom:max(24px, env(safe-area-inset-bottom));
+    background:var(--bg); color:var(--fg); font:16px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-tap-highlight-color:transparent; }
+  .kartu { max-width:340px; width:100%; text-align:center; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:28px 22px; }
+  h1 { font-size:20px; margin:16px 0 6px; }
+  p { color:var(--muted); margin:0 0 20px; font-size:15px; }
+  button { width:100%; min-height:48px; border:0; border-radius:14px; background:var(--brand); color:#fff; font:600 16px/1 inherit; }
+  button:active { transform:scale(.98); }
+</style>
+</head>
+<body>
+  <div class="kartu">
+    <svg width="56" height="56" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#0f766e"/><path d="M14 24h36a4 4 0 0 1 4 4v18a4 4 0 0 1-4 4H14a4 4 0 0 1-4-4V28a4 4 0 0 1 4-4Zm0 0 28-10v10" fill="none" stroke="#fff" stroke-width="3.5" stroke-linejoin="round"/><circle cx="44" cy="37" r="3.2" fill="#fff"/></svg>
+    <h1>Lagi offline</h1>
+    <p>DompetKos butuh internet buat ambil data terbaru. Catat lewat WhatsApp tetap bisa kalau HP lo online lagi.</p>
+    <button type="button" onclick="location.reload()">Coba lagi</button>
+  </div>
+</body>
+</html>

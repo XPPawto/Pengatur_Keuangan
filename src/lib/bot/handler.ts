@@ -126,7 +126,11 @@ async function clearPending(db: Db, nomor: string) {
 }
 
 /** Titik masuk bot: pesan masuk → daftar balasan. Semua logika ada di service layer. */
-export async function handleMessage(db: Db, msg: IncomingMessage): Promise<string[]> {
+/** Pesan lebih panjang dari ini dipotong (mencegah pesan raksasa menghabiskan memori / kuota AI). */
+const MAKS_PESAN = 4000;
+
+export async function handleMessage(db: Db, masukan: IncomingMessage): Promise<string[]> {
+  const msg = { ...masukan, text: (masukan.text ?? "").slice(0, MAKS_PESAN) };
   const nomor = normalizePhone(msg.nomor);
   const now = msg.now;
   const peran = await peranNomor(db, nomor);

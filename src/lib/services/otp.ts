@@ -20,6 +20,11 @@ export async function requestLoginCode(db: Db, now: Date): Promise<void> {
   const last = await db.loginCode.findFirst({ orderBy: { id: "desc" } });
   if (last && now.getTime() - last.dibuatPada.getTime() < JEDA_MS) throw new AppError("invalid", "Tunggu 1 menit sebelum minta kode lagi.");
 
+  const sejamLalu = new Date(now.getTime() - 3600_000);
+  if ((await db.loginCode.count({ where: { dibuatPada: { gte: sejamLalu } } })) >= 5) throw new AppError("invalid", "Terlalu sering minta kode. Coba lagi 1 jam lagi atau login pakai password.");
+  // kode lama yang belum dipakai langsung hangus: hanya satu kode yang berlaku pada satu waktu
+  await db.loginCode.updateMany({ where: { dipakai: false }, data: { dipakai: true } });
+
   const kode = String(randomInt(0, 1_000_000)).padStart(6, "0");
   await db.loginCode.create({ data: { kodeHash: hash(kode), kedaluwarsa: new Date(now.getTime() + BERLAKU_MS), dibuatPada: now } });
   const isi = `Kode login DompetKos: *${kode}*\nBerlaku 5 menit. Jangan kasih ke siapa pun. Kalau lo nggak minta, abaikan aja.`;
