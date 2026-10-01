@@ -144,8 +144,8 @@ export default async function KoneksiPage() {
           jid={setel.grup_ai_jid}
           aktif={setel.grup_ai_aktif === "1"}
           mode={setel.grup_ai_mode}
-          batas={Number(setel.grup_ai_batas_harian) || 150}
-          perOrang={Number(setel.grup_ai_per_orang_menit) || 3}
+          batas={Number(setel.grup_ai_batas_harian) || 0}
+          perOrang={Number(setel.grup_ai_per_orang_menit) || 0}
           tanda={setel.grup_ai_tanda === "1"}
           pakaiHariIni={pakaiGrup}
           penyedia={penyediaGrup.map((p) => LABEL_PENYEDIA[p])}

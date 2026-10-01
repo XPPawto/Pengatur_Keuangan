@@ -178,8 +178,8 @@ export async function simpanGrupAIAction(_: FormState, form: FormData): Promise<
   const perOrang = Math.round(Number(form.get("grup_ai_per_orang_menit")));
   if (jid && !/^[\d-]{5,40}@g\.us$/.test(jid)) return { error: "ID grup tidak valid (bentuknya 1203630…@g.us). Paling mudah: ketik !aigrup aktif di grupnya." };
   if (!MODE_GRUP.includes(mode)) return { error: "Mode tidak dikenal." };
-  if (!(batas >= 1 && batas <= 2000)) return { error: "Batas harian harus 1–2000." };
-  if (!(perOrang >= 1 && perOrang <= 20)) return { error: "Batas per orang per menit harus 1–20." };
+  if (!(batas >= 0 && batas <= 100000)) return { error: "Batas harian harus 0–100000 (0 = tanpa batas)." };
+  if (!(perOrang >= 0 && perOrang <= 60)) return { error: "Batas per orang per menit harus 0–60 (0 = tanpa batas)." };
   const aktif = form.get("grup_ai_aktif") === "on";
   if (aktif && !jid) return { error: "Pilih grupnya dulu (ketik !aigrup aktif di grup, atau isi ID grup)." };
   await setSetting(prisma, "grup_ai_jid", jid);

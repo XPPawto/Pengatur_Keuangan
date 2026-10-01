@@ -39,9 +39,10 @@ export const DEFAULT_SETTINGS = {
   grup_ai_aktif: "0",
   /** perintah = hanya pesan berawalan /ai (atau bot di-mention / pesan bot dibalas); pertanyaan = ditambah pesan berbentuk pertanyaan; semua = setiap pesan teks */
   grup_ai_mode: "perintah",
-  grup_ai_batas_harian: "150",
-  /** maks pertanyaan per orang per menit; lebih dari itu diabaikan */
-  grup_ai_per_orang_menit: "3",
+  /** batas jawaban AI grup per hari; 0 = tanpa batas (bawaan). Batas dari penyedia (kuota gratis, langganan) tetap berlaku */
+  grup_ai_batas_harian: "0",
+  /** maks pertanyaan per orang per menit; 0 = tanpa batas (bawaan) */
+  grup_ai_per_orang_menit: "0",
   /** cetak nama penyedia & model di bawah jawaban */
   grup_ai_tanda: "1",
   /** hitungan internal untuk giliran penyedia (round robin) */

@@ -19,6 +19,14 @@ export interface IncomingWaMessage {
     disapa: boolean;
     /** pesan asli (buram), untuk membalas dengan kutipan */
     pesan?: unknown;
+    /** pesan yang dibalas pengirim (kalau pesan ini membalas sesuatu) */
+    kutipan?: {
+      teks: string;
+      /** yang dibalas adalah pesan bot sendiri */
+      dariBot: boolean;
+      /** ada kalau yang dibalas berisi gambar; dipanggil hanya saat dibutuhkan */
+      gambar?: () => Promise<Buffer>;
+    };
   };
 }
 

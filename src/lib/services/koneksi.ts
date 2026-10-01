@@ -116,7 +116,7 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
       dipilih: !!grupJid,
       aktif: !!grupJid && grupAktif === "1",
       hariIni: grupOk.reduce((n, x) => n + x._count._all, 0),
-      batas: grupBatas || 150,
+      batas: grupBatas, // 0 = tanpa batas
       per: Object.fromEntries(grupOk.map((x) => [x.penyedia, x._count._all])),
       roda,
       berikut: urutanGiliran(roda, putaran)[0] ?? null,

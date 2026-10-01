@@ -75,13 +75,15 @@ export default function GrupAIPanel({
               <label htmlFor="grup_ai_batas_harian" className="label">
                 Batas / hari ({pakaiHariIni} terpakai)
               </label>
-              <input id="grup_ai_batas_harian" name="grup_ai_batas_harian" type="number" min={1} max={2000} defaultValue={batas} className="input num" />
+              <input id="grup_ai_batas_harian" name="grup_ai_batas_harian" type="number" min={0} max={100000} defaultValue={batas} className="input num" />
+              <p className="hint">0 = tanpa batas</p>
             </div>
             <div>
               <label htmlFor="grup_ai_per_orang_menit" className="label">
                 Per orang / menit
               </label>
-              <input id="grup_ai_per_orang_menit" name="grup_ai_per_orang_menit" type="number" min={1} max={20} defaultValue={perOrang} className="input num" />
+              <input id="grup_ai_per_orang_menit" name="grup_ai_per_orang_menit" type="number" min={0} max={60} defaultValue={perOrang} className="input num" />
+              <p className="hint">0 = tanpa batas</p>
             </div>
           </div>
         </div>
@@ -97,7 +99,7 @@ export default function GrupAIPanel({
       )}
 
       <p className="hint">
-        Jatah AI grup terpisah dari jatah AI pemilik. Isi pesan grup dikirim ke penyedia AI yang bergiliran (Claude, Gemini, OpenRouter); di paket gratis, data bisa dipakai penyedia untuk meningkatkan layanan. Beri tahu anggota grup.
+        Bawaannya tanpa batas pertanyaan (isi angka untuk membatasi). Batas dari penyedia tetap berlaku: kuota gratis Gemini/OpenRouter, dan langganan Claude yang dipakai bersama claude.ai. Kalau satu penyedia kehabisan jatah, bot otomatis pindah ke penyedia berikutnya. Jatah AI grup terpisah dari jatah AI pemilik. Isi pesan grup dikirim ke penyedia AI yang bergiliran (Claude, Gemini, OpenRouter); di paket gratis, data bisa dipakai penyedia untuk meningkatkan layanan. Beri tahu anggota grup.
       </p>
     </div>
   );

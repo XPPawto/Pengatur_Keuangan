@@ -1,8 +1,9 @@
+import fs from "node:fs";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HasilClaude } from "@/lib/ai/claude";
 import { aturDaftarGemini } from "@/lib/ai/gemini";
-import { adalahPertanyaan, bersihkanBalasan, prosesPesanGrup, resetKeadaanGrup, urutanGiliran } from "@/lib/ai/grup";
+import { adalahPertanyaan, BANTUAN, bersihkanBalasan, IDENTITAS, pertanyaanIdentitas, prosesPesanGrup, resetKeadaanGrup, SYSTEM_GRUP, urutanGiliran } from "@/lib/ai/grup";
 import { aturDaftarModel } from "@/lib/ai/openrouter";
 import { pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI } from "@/lib/ai/panggil";
 import { dataKoneksi } from "@/lib/services/koneksi";
@@ -26,6 +27,9 @@ const OR_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
 let dipanggil: string[] = [];
 let prompts: string[] = [];
 let sistem: string[] = [];
+/** jalur file gambar yang diterima tiap panggilan penyedia (null = tanpa gambar) dan apakah filenya ada saat dipanggil */
+let jalurGambar: (string | null)[] = [];
+let gambarAda: (boolean | null)[] = [];
 let jawab: Record<"claude" | "gemini" | "openrouter", () => HasilClaude>;
 let pulih: (() => void)[] = [];
 
@@ -37,12 +41,14 @@ beforeEach(async () => {
   dipanggil = [];
   prompts = [];
   sistem = [];
+  jalurGambar = [];
+  gambarAda = [];
   jawab = { claude: () => ok("jawaban claude"), gemini: () => ok("jawaban gemini"), openrouter: () => ok("jawaban openrouter") };
   pulih = [
-    setPenjalanAI(async (p) => (dipanggil.push("claude"), prompts.push(p.prompt), sistem.push(p.system), jawab.claude())),
+    setPenjalanAI(async (p) => (dipanggil.push("claude"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), jawab.claude())),
     setPenjalanCadangan({
-      gemini: async (p) => (dipanggil.push("gemini"), prompts.push(p.prompt), sistem.push(p.system), jawab.gemini()),
-      openrouter: async (p) => (dipanggil.push("openrouter"), prompts.push(p.prompt), sistem.push(p.system), jawab.openrouter()),
+      gemini: async (p) => (dipanggil.push("gemini"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), jawab.gemini()),
+      openrouter: async (p) => (dipanggil.push("openrouter"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), jawab.openrouter()),
     }),
   ];
 });
@@ -370,5 +376,160 @@ describe("peta Koneksi: jalur AI grup & giliran round robin", () => {
     const k = await dataKoneksi(db, at(12));
     expect(k.grup.roda).toEqual(["gemini", "openrouter"]);
     expect(k.grup.berikut).toBe("gemini");
+  });
+});
+
+describe("ala Meta AI: bantuan, pesan yang dibalas, dan foto", () => {
+  const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+  const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64)]);
+  const lengkap = (text: string, o: { nomor?: string; gambar?: () => Promise<Buffer>; kutipan?: { teks: string; dariBot: boolean; gambar?: () => Promise<Buffer> }; now?: Date } = {}) =>
+    prosesPesanGrup(db, { nomor: o.nomor ?? "628111111111", text, waktu: o.now ?? at(12), gambar: o.gambar, grup: { jid: GRUP, nama: "Budi", disapa: false, kutipan: o.kutipan } }, o.now ?? at(12));
+
+  it("/ai bantuan: daftar kemampuan & batas, tanpa memanggil AI dan tanpa memakai jatah", async () => {
+    await siapkan(["claude"]);
+    for (let i = 0; i < 6; i++) expect(await kirim(i % 2 ? "/ai bantuan" : "/ai help")).toBe(BANTUAN); // lewat batas 3/menit pun tetap dijawab
+    expect(BANTUAN).toContain("Balas pesan");
+    expect(BANTUAN).toContain("Kirim foto");
+    expect(BANTUAN).toMatch(/Belum bisa:.*internet.*gambar/);
+    expect(dipanggil).toEqual([]);
+    expect(await db.aiCall.count()).toBe(0);
+  });
+
+  it("persona: jujur soal batas (tanpa internet, tanpa bikin gambar), bisa baca foto & pesan yang dibalas", () => {
+    expect(SYSTEM_GRUP).toContain("TIDAK bisa membuka internet");
+    expect(SYSTEM_GRUP).toContain("TIDAK bisa membuat gambar");
+    expect(SYSTEM_GRUP).toContain("Pesan yang dibalas");
+    expect(SYSTEM_GRUP).not.toMatch(/DompetKos/i);
+  });
+
+  it("membalas pesan lalu /ai: pesan yang dibalas ikut ke prompt; /ai saja menanggapi pesan itu", async () => {
+    await siapkan(["claude"]);
+    await lengkap("/ai terjemahkan ke Inggris", { kutipan: { teks: "Selamat pagi, semoga harimu menyenangkan", dariBot: false } });
+    expect(prompts[0]).toContain("# Pesan yang dibalas (dari anggota grup)");
+    expect(prompts[0]).toContain("Selamat pagi, semoga harimu menyenangkan");
+    expect(prompts[0]).toMatch(/# Pesan baru dari Budi\nterjemahkan ke Inggris/);
+
+    await lengkap("/ai", { nomor: "628222222222", kutipan: { teks: "Apa itu blockchain?", dariBot: true } });
+    expect(prompts[1]).toContain("# Pesan yang dibalas (dari asisten)");
+    expect(prompts[1]).toContain("Tanggapi atau jelaskan pesan yang dibalas ini.");
+    // tanpa pesan yang dibalas: bagian itu tidak ada
+    await lengkap("/ai halo", { nomor: "628333333333" });
+    expect(prompts[2]).not.toContain("# Pesan yang dibalas");
+  });
+
+  it("foto + /ai: file gambar dikirim ke penyedia (ada saat dipanggil), prompt menyebut file, dan dihapus sesudahnya", async () => {
+    await siapkan(["claude"]);
+    const r = await lengkap("/ai ini tanaman apa?", { gambar: async () => PNG });
+    expect(r).toContain("jawaban claude");
+    expect(gambarAda).toEqual([true]);
+    expect(jalurGambar[0]).toMatch(/foto\.png$/);
+    expect(prompts[0]).toContain("Gambar terlampir: ./foto.png");
+    expect(prompts[0]).toContain("ini tanaman apa?");
+    expect(fs.existsSync(jalurGambar[0]!)).toBe(false); // sudah dibersihkan
+    expect(fs.existsSync(jalurGambar[0]!.replace(/\/foto\.png$/, ""))).toBe(false);
+    expect((await db.aiChat.findMany({ where: { peran: "user" } }))[0].isi).toContain("[mengirim foto]");
+  });
+
+  it("membalas sebuah foto dengan /ai (tanpa teks): foto yang dibalas dibaca; foto sendiri didahulukan kalau dua-duanya ada", async () => {
+    await siapkan(["claude"]);
+    await lengkap("/ai", { kutipan: { teks: "", dariBot: false, gambar: async () => JPG } });
+    expect(jalurGambar[0]).toMatch(/foto\.jpg$/);
+    expect(prompts[0]).toContain("Jelaskan apa yang ada di gambar ini.");
+
+    await lengkap("/ai bandingkan", { nomor: "628222222222", gambar: async () => PNG, kutipan: { teks: "", dariBot: false, gambar: async () => JPG } });
+    expect(jalurGambar[1]).toMatch(/foto\.png$/);
+  });
+
+  it("foto: OpenRouter dengan model terpasang (bisa teks saja) tidak ikut bergiliran; Claude/Gemini bergantian", async () => {
+    await siapkan(); // OpenRouter terpasang dengan model pilihan
+    for (let i = 0; i < 4; i++) await lengkap(`/ai foto ${i}`, { nomor: `62811000020${i}`, now: at(12, i), gambar: async () => PNG });
+    expect(dipanggil).toEqual(["claude", "gemini", "claude", "gemini"]);
+    expect(dipanggil).not.toContain("openrouter");
+  });
+
+  it("foto: kalau hanya OpenRouter bermodel terpasang yang tersambung, diberi tahu (tanpa memanggil AI)", async () => {
+    await siapkan(["openrouter"]);
+    expect(await lengkap("/ai ini apa?", { gambar: async () => PNG })).toContain("Belum ada penyedia yang bisa membaca foto");
+    expect(dipanggil).toEqual([]);
+  });
+
+  it("foto rusak / bukan gambar / gagal diunduh: pesan ramah, AI tidak dipanggil, tidak ada file tertinggal", async () => {
+    await siapkan(["claude"]);
+    expect(await lengkap("/ai apa ini?", { gambar: async () => Buffer.from("bukan gambar sama sekali, hanya teks biasa") })).toContain("nggak bisa kubaca");
+    expect(await lengkap("/ai apa ini?", { nomor: "628222222222", gambar: async () => { throw new Error("jaringan putus"); } })).toContain("gagal diunduh");
+    expect(await lengkap("/ai apa ini?", { nomor: "628333333333", gambar: async () => Buffer.alloc(9 * 1024 * 1024, 0xff) })).toContain("nggak bisa kubaca"); // > 8 MB
+    expect(dipanggil).toEqual([]);
+  });
+
+  it("file foto dihapus juga kalau semua penyedia gagal", async () => {
+    await siapkan(["claude"]);
+    jawab.claude = rusak;
+    const r = await lengkap("/ai apa ini?", { gambar: async () => PNG });
+    expect(r).toContain("lagi sibuk atau bermasalah");
+    expect(fs.existsSync(jalurGambar[0]!)).toBe(false);
+  });
+});
+
+describe("tanpa batas pertanyaan (bawaan)", () => {
+  it("satu orang bisa bertanya berkali-kali dalam semenit tanpa dibatasi", async () => {
+    await siapkan(["claude"]);
+    for (let i = 0; i < 12; i++) {
+      const r = await kirim(`/ai pertanyaan ke-${i}`, { now: at(12, 0, i) }); // 12 pertanyaan dalam 12 detik, orang yang sama
+      expect(r, `ke-${i}`).toContain("jawaban claude");
+    }
+    expect(dipanggil).toHaveLength(12);
+  });
+
+  it("tidak ada batas harian: tetap dijawab walau sudah ratusan jawaban hari ini", async () => {
+    await siapkan(["claude"]);
+    await db.aiCall.createMany({ data: Array.from({ length: 400 }, (_, i) => ({ waktu: at(11, 0, i), fitur: "chat_grup", penyedia: "claude", utama: true, model: "sonnet", status: "ok" })) });
+    expect(await kirim("/ai masih bisa?", { now: at(12) })).toContain("jawaban claude");
+    expect(await kirim("!aigrup status", { nomor: OWNER, now: at(12, 1) })).toContain("tanpa batas");
+  });
+
+  it("batas tetap bisa dipasang kalau diinginkan (angka > 0), dan 0 mematikannya lagi", async () => {
+    await siapkan(["claude"]);
+    await setSetting(db, "grup_ai_per_orang_menit", "1");
+    expect(await kirim("/ai satu", { now: at(12, 0, 0) })).toContain("jawaban");
+    expect(await kirim("/ai dua", { now: at(12, 0, 5) })).toContain("Pelan-pelan");
+    await setSetting(db, "grup_ai_per_orang_menit", "0");
+    expect(await kirim("/ai tiga", { now: at(12, 0, 10) })).toContain("jawaban");
+  });
+});
+
+describe("identitas: Fable 5", () => {
+  it("pertanyaan identitas dijawab langsung 'Fable 5' tanpa memanggil AI dan tanpa memakai jatah", async () => {
+    await siapkan(["claude", "gemini"]);
+    await setSetting(db, "grup_ai_per_orang_menit", "1"); // jatah ketat pun tidak terpakai oleh pertanyaan identitas
+    for (const t of ["ai apa?", "AI apa ini", "model apa", "model apa ini?", "kamu ai apa", "kamu siapa", "siapa kamu?", "siapa namamu", "nama kamu siapa", "bot apa sih", "pakai model apa", "kamu pake model apa ya", "ai ini apa", "who are you", "which AI are you"]) {
+      const r = await kirim(`/ai ${t}`);
+      expect(r, t).toBe(IDENTITAS);
+    }
+    expect(IDENTITAS).toContain("Fable 5");
+    expect(dipanggil).toEqual([]);
+    expect(await db.aiCall.count()).toBe(0);
+  });
+
+  it("hanya pertanyaan identitas yang tertangkap; pertanyaan sungguhan tetap ke AI", async () => {
+    expect(pertanyaanIdentitas("ai apa yang paling bagus untuk belajar coding?")).toBe(false);
+    expect(pertanyaanIdentitas("model apa yang cocok buat mobil listrik")).toBe(false);
+    expect(pertanyaanIdentitas("siapa presiden pertama indonesia")).toBe(false);
+    expect(pertanyaanIdentitas("apa itu ai")).toBe(false);
+    await siapkan(["claude"]);
+    expect(await kirim("/ai siapa presiden pertama indonesia?")).toContain("jawaban claude");
+    expect(dipanggil).toEqual(["claude"]);
+  });
+
+  it("instruksi sistem: nama Fable 5, tidak mengaku manusia, jujur kalau ditanya lebih dalam", () => {
+    expect(SYSTEM_GRUP).toContain("*Fable 5*");
+    expect(SYSTEM_GRUP).toContain("Jangan pernah mengaku manusia");
+    expect(SYSTEM_GRUP).toMatch(/jangan mengarang.*bergiliran oleh beberapa penyedia AI/s);
+  });
+
+  it("mengirim foto dengan 'ai apa?' bukan pertanyaan identitas (itu tentang fotonya)", async () => {
+    await siapkan(["claude"]);
+    const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+    const r = await prosesPesanGrup(db, { nomor: "628111111111", text: "/ai ini apa?", waktu: at(12), gambar: async () => PNG, grup: { jid: GRUP, nama: "Budi", disapa: false } }, at(12));
+    expect(r).toContain("jawaban claude");
   });
 });
