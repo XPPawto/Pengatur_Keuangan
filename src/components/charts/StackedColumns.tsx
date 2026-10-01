@@ -25,7 +25,7 @@ interface Props {
 export default function StackedColumns({ labels, series, data, height = 240, title, refLine }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
-  const pad = { t: 14, r: refLine ? 52 : 12, b: 28, l: 44 };
+  const pad = { t: 14, r: refLine ? Math.max(52, Math.round(refLine.label.length * 6.6) + 14) : 12, b: 28, l: 44 };
   const iw = width - pad.l - pad.r;
   const ih = height - pad.t - pad.b;
   const totals = data.map((d) => series.reduce((s, x) => s + (d[x.key] ?? 0), 0));

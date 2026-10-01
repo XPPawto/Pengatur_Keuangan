@@ -16,29 +16,40 @@ export const NAMA_PENDEK: Record<EnvelopeKode, string> = {
 export const BANTUAN = `*DompetKos — daftar perintah*
 
 *Catat*
-• \`tempe 5k\` · \`beli telur 14rb\` · \`tempe 5k sama telur 14k\`
-• \`kemarin tempe 5k\` — catat buat kemarin
+• \`tempe 5k\` · \`tempe 5k sama telur 14k\` · \`kemarin tempe 5k\`
+• Kirim *foto struk* → dibaca otomatis
 • \`nol\` / \`gak jajan\` — hari ini nggak jajan
-• \`batal\` — hapus catatan terakhir
+• \`batal\` — batalkan aksi terakhir (apa pun)
 • \`ubah 12k\` — ganti nominal catatan terakhir
 
 *Cek*
-• \`sisa\` — semua amplop + jatah makan
-• \`jatah\` — jatah makan hari ini
-• \`hari ini\` — transaksi hari ini
-• \`rekap\` — ringkasan minggu ini
-• \`target\` — progres tabungan kado
-• \`tagihan\` — tagihan yang belum lunas
+• \`sisa\` · \`jatah\` · \`hari ini\` · \`rekap\` · \`target\` · \`tagihan\`
+• \`skor\` — skor mingguan, level, tantangan
+• \`aktivitas\` — siapa ngapain barusan
 
-*Uang*
-• \`masuk 300\` — uang mingguan masuk
-• \`bayar paylater 50k\` — bayar & tandai lunas
+*Uang masuk*
+• \`masuk 300\` — uang mingguan
+• \`ayah kirim 100k\` — kiriman di luar uang mingguan
+• \`koreksi masuk 300\` — salah ketik nominal mingguan
+• \`saldo asli 412k\` — cocokkan catatan dengan uang asli
+
+*Atur uang*
+• \`bayar paylater 50k\`
 • \`pindah 10k darurat ke makan alasan ...\`
-• \`mau beli sepatu 150k\` — cek dampak dulu sebelum beli
+• \`mau beli sepatu 150k\` — tahan belanja 24 jam
 
-*Masak*
-• \`belanja\` — daftar belanja minggu ini
-• \`menu\` — menu hari ini + lauk rotasi
+*Autopilot*
+• \`proyeksi\` — 6 minggu ke depan
+• \`kalau beli sepatu 150k\` · \`kalau masuk 250 3 minggu\`
+• \`saran\` — saran pindah uang, sekali \`ok\`
+• \`pola\` — kebiasaan & pemborosan
+
+*Teman kos*
+• \`pinjemin budi 20k\` · \`budi bayar 20k\`
+• \`pinjem ke budi 20k\` · \`bayar utang budi\`
+• \`patungan galon 18k sama budi andi\` · \`utang\`
+
+*Masak*: \`belanja\` · \`menu\`
 
 Nominal bebas: 12k, 12rb, 12 ribu, 12.000, 1,5jt.`;
 

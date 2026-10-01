@@ -8,6 +8,7 @@ import { getStreak } from "@/lib/services/daily";
 import { listHolds, savedTotal } from "@/lib/services/holds";
 import { getCurrentPeriod } from "@/lib/services/periods";
 import { weeklyStats } from "@/lib/services/reports";
+import { statistikKiriman } from "@/lib/services/extra";
 import { addDays, fmtRentang, fmtTanggal, fmtTanggalPanjang, HARI, wibDate, weekdayOf } from "@/lib/time";
 import { putuskanTahan, tahanBelanja } from "../actions-lain";
 
@@ -23,7 +24,7 @@ const SERI = [
 
 export default async function RekapPage() {
   const now = new Date();
-  const [weeks, hemat, holds, streak, period] = await Promise.all([weeklyStats(prisma, now, 12), savedTotal(prisma), listHolds(prisma, 30), getStreak(prisma, now), getCurrentPeriod(prisma)]);
+  const [weeks, hemat, holds, streak, period, kiriman] = await Promise.all([weeklyStats(prisma, now, 12), savedTotal(prisma), listHolds(prisma, 30), getStreak(prisma, now), getCurrentPeriod(prisma), statistikKiriman(prisma, now)]);
   const ini = weeks[weeks.length - 1];
 
   // makan per hari minggu ini
@@ -62,6 +63,12 @@ export default async function RekapPage() {
         <Stat icon="shield" label="Diselamatkan" value={rp(hemat.total)} hint={`${hemat.jumlah}× tidak jadi beli`} />
         <Stat icon="receipt" label="Total pengeluaran" value={rp(totalSemua)} hint={`${weeks.length} minggu terakhir`} />
       </div>
+      {kiriman.jumlah > 0 && (
+        <p className="text-sm text-muted">
+          Kiriman tambahan: total <b className="num text-fg">{rp(kiriman.total)}</b> ({kiriman.jumlah}×), bulan ini <b className="num text-fg">{rp(kiriman.bulanIni)}</b>
+          {kiriman.perDari.length > 1 && ` · ${kiriman.perDari.map(([d, n]) => `${d} ${rp(n)}`).join(", ")}`}.
+        </p>
+      )}
 
       {weeks.length === 0 ? (
         <EmptyState icon="chart" title="Belum ada data rekap">

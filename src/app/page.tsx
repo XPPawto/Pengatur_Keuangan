@@ -3,6 +3,7 @@ import AutoRefresh from "@/components/AutoRefresh";
 import EnvelopeList from "@/components/EnvelopeList";
 import ProgressBar from "@/components/ProgressBar";
 import UangMasukForm from "@/components/UangMasukForm";
+import KirimanForm from "@/components/KirimanForm";
 import { ENVELOPE_ICON, Icon } from "@/components/icons";
 import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
 import { batalkanUangMasuk, konfirmasiUangMasuk, tandaiTanpaJajan } from "./actions";
@@ -10,7 +11,9 @@ import { prisma } from "@/lib/db";
 import { TONE_TEXT, type Tone } from "@/lib/format";
 import { rp } from "@/lib/money";
 import { getDashboard } from "@/lib/services/dashboard";
-import { getSetting } from "@/lib/services/settings";
+import { getAllSettings } from "@/lib/services/settings";
+import { getPrestasi } from "@/lib/services/game";
+import { parseAturanBagi } from "@/lib/services/extra";
 import { fmtRentang, fmtTanggal, fmtTanggalPanjang, namaHari, wibHM } from "@/lib/time";
 import type { EnvelopeKode } from "@/lib/types";
 
@@ -18,7 +21,17 @@ const NAMA: Record<EnvelopeKode, string> = { makan: "Makan", data: "Paket data",
 
 export default async function Beranda() {
   const now = new Date();
-  const [d, nama] = await Promise.all([getDashboard(prisma, now), getSetting(prisma, "nama_pengguna")]);
+  const [d, setelan, prestasi, kabar] = await Promise.all([
+    getDashboard(prisma, now),
+    getAllSettings(prisma),
+    getPrestasi(prisma, now),
+    prisma.outbox.findFirst({ where: { jenis: "info_kiriman", dibuatPada: { gte: new Date(now.getTime() - 3 * 86400_000) } }, orderBy: { id: "desc" } }),
+  ]);
+  const nama = setelan.nama_pengguna;
+  const kabarBelumDicatat = kabar && !(await prisma.extraIncome.findFirst({ where: { waktu: { gte: kabar.dibuatPada } } }));
+  const aturanBagi = Object.entries(parseAturanBagi(setelan.bagi_ekstra))
+    .map(([k, v]) => `${k} ${v}%`)
+    .join(", ");
   const { jam } = wibHM(now);
   const sapa = jam < 11 ? "Selamat pagi" : jam < 15 ? "Selamat siang" : jam < 18 ? "Selamat sore" : "Selamat malam";
 
@@ -69,6 +82,15 @@ export default async function Beranda() {
         </Card>
       )}
 
+      {kabarBelumDicatat && (
+        <section className="card card-pad flex flex-wrap items-center gap-3 border-brand/40">
+          <span className="flex size-10 items-center justify-center rounded-xl bg-brand-soft text-brand">
+            <Icon name="gift" size={19} />
+          </span>
+          <p className="min-w-0 flex-1 text-sm">{kabar!.isi.replace(/`/g, "")}</p>
+        </section>
+      )}
+
       {!d.period && !d.pending && (
         <Card title="Uang mingguan sudah masuk?" icon="wallet">
           <p className="mb-3 text-sm text-muted">Masukkan nominalnya, nanti dibagi otomatis ke amplop sesuai rencana.</p>
@@ -83,7 +105,7 @@ export default async function Beranda() {
             <MiniStat icon="flame" label="Streak" value={`${d.streak} hari`} hint="catat berturut-turut" />
             <MiniStat icon="gift" label="Kado" value={d.goal ? `${Math.round(d.goal.persenMin)}%` : "-"} hint={d.goal ? rp(d.goal.saldo) : undefined} />
             <MiniStat icon="umbrella" label="Darurat" value={rp(d.balances.find((b) => b.kode === "darurat")?.saldo ?? 0)} hint="dana cadangan" />
-            <MiniStat icon="shield" label="Diselamatkan" value={rp(d.hemat.total)} hint={`${d.hemat.jumlah} kali tahan belanja`} />
+            <MiniStat icon="trophy" label="Skor minggu ini" value={`${prestasi.skorIni?.total ?? 0}/100`} hint={`Level ${prestasi.level.level} · ${prestasi.level.gelar}`} />
           </div>
         </div>
       )}
@@ -124,6 +146,17 @@ export default async function Beranda() {
               </ul>
             )}
           </Card>
+
+          {d.period && (
+            <Card title={`Kiriman tambahan dari ${setelan.pengirim_default}`} icon="gift">
+              <details>
+                <summary className="cursor-pointer text-sm font-medium text-brand">Catat uang yang masuk di luar uang mingguan</summary>
+                <div className="mt-3">
+                  <KirimanForm pengirim={setelan.pengirim_default} aturan={aturanBagi} />
+                </div>
+              </details>
+            </Card>
+          )}
 
           {d.goal && (
             <Card title="Target kado" icon="target" action={<Link href="/target" className="text-sm font-medium text-brand">Detail</Link>}>

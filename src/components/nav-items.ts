@@ -22,6 +22,8 @@ export const NAV_GROUPS: { judul: string; items: NavItem[] }[] = [
       { href: "/amplop", label: "Amplop & anggaran", icon: "wallet", deskripsi: "Alokasi, pindah antar amplop, kunci" },
       { href: "/tagihan", label: "Tagihan", icon: "calendar", deskripsi: "Paylater dan tagihan lain" },
       { href: "/target", label: "Target", icon: "target", deskripsi: "Tabungan kado & proyeksi" },
+      { href: "/autopilot", label: "Autopilot", icon: "compass", deskripsi: "Proyeksi, simulasi \"kalau…\", saran otomatis" },
+      { href: "/hutang", label: "Hutang-piutang", icon: "hand-coins", deskripsi: "Pinjaman teman kos & patungan" },
     ],
   },
   {
@@ -29,12 +31,15 @@ export const NAV_GROUPS: { judul: string; items: NavItem[] }[] = [
     items: [
       { href: "/belanja", label: "Belanja mingguan", icon: "cart", deskripsi: "Daftar belanja, menu, lauk rotasi" },
       { href: "/rekap", label: "Rekap", icon: "chart", deskripsi: "Grafik mingguan & tahan belanja" },
+      { href: "/prestasi", label: "Prestasi", icon: "trophy", deskripsi: "Skor mingguan, tantangan, lencana, level" },
     ],
   },
   {
     judul: "Sistem",
     items: [
       { href: "/whatsapp", label: "Koneksi WhatsApp", icon: "message", deskripsi: "Pairing QR / kode, status bot" },
+      { href: "/aktivitas", label: "Aktivitas", icon: "undo", deskripsi: "Siapa mengubah apa, batalkan aksi" },
+      { href: "/sistem", label: "Kesehatan sistem", icon: "pulse", deskripsi: "Status bot, antrean, backup, penyimpanan" },
       { href: "/pengaturan", label: "Pengaturan", icon: "settings", deskripsi: "Nomor, pengingat, ekspor, backup" },
     ],
   },

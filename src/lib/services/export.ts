@@ -52,7 +52,8 @@ export async function buildWorkbook(db: Db, now: Date): Promise<Buffer> {
   const cols: Partial<ExcelJS.Column>[] = [
     { header: "Periode", key: "periode", width: 16 },
     { header: "Mulai", key: "mulai", width: 12 },
-    { header: "Pemasukan", key: "pemasukan", width: 14, style: { numFmt: RP } },
+    { header: "Uang mingguan", key: "pemasukan", width: 14, style: { numFmt: RP } },
+    { header: "Tambahan", key: "tambahan", width: 12, style: { numFmt: RP } },
   ];
   for (const e of envs) {
     cols.push({ header: `${e.nama} (alokasi)`, key: `${e.kode}_a`, width: 16, style: { numFmt: RP } });
@@ -70,6 +71,7 @@ export async function buildWorkbook(db: Db, now: Date): Promise<Buffer> {
       periode: fmtRentang(w.period.tanggalMulai, w.period.tanggalSelesai),
       mulai: w.period.tanggalMulai,
       pemasukan: w.period.pemasukan,
+      tambahan: w.period.tambahan,
       total: w.totalKeluar,
       rata: w.rataMakanPerHari,
       disiplin: `${w.hariDisiplin}/${w.hariBerjalan}`,

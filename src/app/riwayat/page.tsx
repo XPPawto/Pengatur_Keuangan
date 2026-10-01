@@ -9,6 +9,9 @@ import { listEnvelopes } from "@/lib/services/envelopes";
 import { listTransactions } from "@/lib/services/transactions";
 import { fmtRentang, fmtTanggalPanjang, namaHari, wibHM } from "@/lib/time";
 import { ENVELOPE_KODE, type EnvelopeKode } from "@/lib/types";
+import ConfirmButton from "@/components/ConfirmButton";
+import { hapusPindahan } from "../actions-plus";
+import { ringkasBagian } from "@/lib/services/extra";
 
 export const metadata = { title: "Riwayat" };
 
@@ -23,6 +26,7 @@ export default async function RiwayatPage({ searchParams }: { searchParams: Prom
   const cari = (sp.q ?? "").trim().toLowerCase();
   const period = periods.find((p) => p.id === periodId);
 
+  const kiriman = period && !kode ? await prisma.extraIncome.findMany({ where: { periodId: period.id }, orderBy: { waktu: "desc" } }) : [];
   const [semua, transfers] = await Promise.all([
     period ? listTransactions(prisma, { periodId: period.id, kode }) : Promise.resolve([]),
     period && !kode ? prisma.transfer.findMany({ where: { periodId: period.id }, include: { dari: true, ke: true }, orderBy: { id: "desc" } }) : Promise.resolve([]),
@@ -123,6 +127,22 @@ export default async function RiwayatPage({ searchParams }: { searchParams: Prom
             </Card>
           ))}
 
+          {kiriman.length > 0 && !cari && (
+            <Card title="Uang tambahan masuk" icon="gift">
+              <ul className="space-y-2 text-sm">
+                {kiriman.map((k) => (
+                  <li key={k.id} className="flex justify-between gap-3">
+                    <span className="min-w-0">
+                      Dari {k.dari}
+                      <span className="block truncate text-xs text-muted">{ringkasBagian(JSON.parse(k.bagian))}</span>
+                    </span>
+                    <b className="num shrink-0 text-ok">+{rp(k.nominal)}</b>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
           {transfers.length > 0 && !cari && (
             <Card title="Pindah antar amplop" icon="transfer">
               <ul className="space-y-2 text-sm">
@@ -132,7 +152,16 @@ export default async function RiwayatPage({ searchParams }: { searchParams: Prom
                       {t.dari.nama} → {t.ke.nama}
                       <span className="block truncate text-xs text-muted">{t.alasan}</span>
                     </span>
-                    <b className="num shrink-0">{rp(t.nominal)}</b>
+                    <span className="flex shrink-0 items-center gap-1">
+                      <b className="num">{rp(t.nominal)}</b>
+                      <form action={hapusPindahan}>
+                        <input type="hidden" name="id" value={t.id} />
+                        <ConfirmButton pesan={`Hapus pindahan ${rp(t.nominal)} ${t.dari.nama} → ${t.ke.nama}?`} className="btn-ghost btn-sm !px-2">
+                          <Icon name="trash" size={15} />
+                          <span className="sr-only">Hapus</span>
+                        </ConfirmButton>
+                      </form>
+                    </span>
                   </li>
                 ))}
               </ul>

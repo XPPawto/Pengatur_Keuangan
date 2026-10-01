@@ -140,7 +140,7 @@ export class WaManager {
 
   private async onIncoming(m: IncomingWaMessage) {
     try {
-      const replies = await handleMessage(this.db, { nomor: m.nomor, text: m.text, now: m.waktu });
+      const replies = await handleMessage(this.db, { nomor: m.nomor, text: m.text, now: m.waktu, gambar: m.gambar });
       for (const r of replies) {
         await this.driver.sendMessage(m.nomor, r);
         if (this.opts.jedaBalasMs) await new Promise((res) => setTimeout(res, this.opts.jedaBalasMs));

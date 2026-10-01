@@ -24,6 +24,10 @@ const MAKS_TUNDA: Record<string, number> = {
   laporan_keluarga: 16 * 60,
   konfirmasi_uang: 16 * 60,
   tahan: 24 * 60,
+  saran: 10 * 60,
+  sistem: 12 * 60,
+  info_kiriman: 12 * 60,
+  piutang: 24 * 60,
 };
 
 export function isJamTenang(now: Date): boolean {

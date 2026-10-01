@@ -1,6 +1,6 @@
 {
   "name": "dompetkos",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "DompetKos: website + bot WhatsApp budget mingguan (sistem amplop)",
   "scripts": {
@@ -28,6 +28,8 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@tesseract.js-data/eng": "^1.0.0",
+    "@tesseract.js-data/ind": "^1.0.0",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "dotenv": "^18.0.5",
     "exceljs": "^4.4.0",
@@ -35,7 +37,8 @@
     "pino": "^10.3.1",
     "qrcode": "^1.5.4",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "tesseract.js": "^6.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",

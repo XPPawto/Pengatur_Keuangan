@@ -8,7 +8,7 @@ import { getGoalProgress } from "./goals";
 import { savedTotal } from "./holds";
 
 export interface WeekSummary {
-  period: { id: number; tanggalMulai: string; tanggalSelesai: string; pemasukan: number; status: string };
+  period: { id: number; tanggalMulai: string; tanggalSelesai: string; pemasukan: number; tambahan: number; status: string };
   perAmplop: { kode: EnvelopeKode; nama: string; alokasi: number; terpakai: number; saldo: number; kumulatif: boolean }[];
   totalKeluar: number;
   makan: number;
@@ -17,6 +17,11 @@ export interface WeekSummary {
   hariDisiplin: number;
   hemat: { total: number; jumlah: number };
   tagihanLunas: { nama: string; nominal: number }[];
+  /** uang tambahan di luar uang mingguan (kiriman Ayah, dll.) */
+  kiriman: { dari: string; nominal: number }[];
+  totalKiriman: number;
+  /** uang yang dipinjamkan/dibayarkan untuk hutang-piutang (bukan belanja) */
+  pinjaman: number;
 }
 
 /** Ringkasan satu periode (dipakai rekap Sabtu, laporan keluarga, halaman Rekap, dan ekspor). */
@@ -26,7 +31,7 @@ export async function weekSummary(db: Db, periodId: number, now: Date): Promise<
   const today = wibDate(now);
   const [balances, txs, logs, envs] = await Promise.all([
     getBalances(db, period.id),
-    db.transaction.findMany({ where: { periodId }, include: { envelope: true } }),
+    db.transaction.findMany({ where: { periodId, debtId: null }, include: { envelope: true } }),
     db.dailyLog.findMany({ where: { tanggal: { gte: period.tanggalMulai, lte: period.tanggalSelesai } } }),
     db.envelope.findMany({ orderBy: { urutanTampil: "asc" } }),
   ]);
@@ -34,6 +39,10 @@ export async function weekSummary(db: Db, periodId: number, now: Date): Promise<
   const hariBerjalan = Math.max(1, Math.min(7, diffDays(period.tanggalMulai, akhir) + 1));
   const perKode = (k: string) => txs.filter((t) => t.envelope.kode === k).reduce((s, t) => s + t.nominal, 0);
   const makan = perKode("makan");
+  const [kiriman, pinjamanAgg] = await Promise.all([
+    db.extraIncome.findMany({ where: { periodId }, orderBy: { waktu: "asc" } }),
+    db.transaction.aggregate({ _sum: { nominal: true }, where: { periodId, debtId: { not: null } } }),
+  ]);
   const [hemat, lunas] = await Promise.all([
     savedTotal(db, { dari: fromWib(period.tanggalMulai), sampai: fromWib(addDays(period.tanggalSelesai, 1)) }),
     db.bill.findMany({ where: { status: "lunas", dibayarPada: { gte: fromWib(period.tanggalMulai), lt: fromWib(addDays(period.tanggalSelesai, 1)) } } }),
@@ -51,6 +60,9 @@ export async function weekSummary(db: Db, periodId: number, now: Date): Promise<
     hariDisiplin: logs.filter((l) => l.tanggal <= akhir && (l.adaCatatan || l.tanpaJajan)).length,
     hemat,
     tagihanLunas: lunas.map((b) => ({ nama: b.nama, nominal: b.nominal })),
+    kiriman: kiriman.map((k) => ({ dari: k.dari, nominal: k.nominal })),
+    totalKiriman: kiriman.reduce((a, k) => a + k.nominal, 0),
+    pinjaman: pinjamanAgg._sum.nominal ?? 0,
   };
 }
 
@@ -67,6 +79,7 @@ export async function rekapMingguanText(db: Db, periodId: number, now: Date): Pr
   }
   const makan = s.perAmplop.find((a) => a.kode === "makan");
   baris.push("", `Total keluar ${rp(s.totalKeluar)}. Rata-rata makan ${rp(s.rataMakanPerHari)}/hari.`);
+  if (s.totalKiriman > 0) baris.push(`Kiriman tambahan minggu ini: ${s.kiriman.map((k) => `${k.dari} ${rp(k.nominal)}`).join(", ")}.`);
   if (makan && makan.saldo > 0) baris.push(`Sisa makan ${rp(makan.saldo)} bakal pindah ke Darurat pas periode baru dikonfirmasi.`);
   if (makan && makan.saldo < 0) baris.push(`Makan minggu ini jebol ${rp(-makan.saldo)}.`);
   baris.push(`Disiplin catat ${s.hariDisiplin}/${s.hariBerjalan} hari, streak ${streak} hari.`);
@@ -87,7 +100,9 @@ export async function laporanKeluargaText(db: Db, periodId: number, now: Date, n
     `*Laporan Keuangan Mingguan — ${nama}*`,
     `Periode ${fmtTanggalPanjang(s.period.tanggalMulai)} s.d. ${fmtTanggalPanjang(s.period.tanggalSelesai)}${selesai ? "" : " (berjalan)"}`,
     "",
-    `Uang diterima: ${rp(s.period.pemasukan)}`,
+    s.totalKiriman > 0
+      ? `Uang diterima: ${rp(s.period.pemasukan + s.totalKiriman)} (uang mingguan ${rp(s.period.pemasukan)} + kiriman tambahan ${rp(s.totalKiriman)})`
+      : `Uang diterima: ${rp(s.period.pemasukan)}`,
     `Total pengeluaran: ${rp(s.totalKeluar)}`,
     `• Makan: ${rp(s.makan)} dari anggaran ${rp(makan?.alokasi ?? 0)} (rata-rata ${rp(s.rataMakanPerHari)} per hari)`,
   ];

@@ -35,6 +35,24 @@ export type ParsedMessage =
   | { type: "laporan" }
   | { type: "jatah" }
   | { type: "ubah"; nominal: number | null }
+  | { type: "kiriman"; dari: string | null; nominal: number | null }
+  | { type: "rekon"; nominal: number | null }
+  | { type: "kalau_beli"; barang: string; nominal: number | null }
+  | { type: "kalau_masuk"; nominal: number | null; minggu: number }
+  | { type: "proyeksi" }
+  | { type: "saran" }
+  | { type: "pola" }
+  | { type: "skor" }
+  | { type: "hutang_list" }
+  | { type: "piutang_baru"; orang: string; nominal: number | null }
+  | { type: "hutang_baru"; orang: string; nominal: number | null }
+  | { type: "piutang_bayar"; orang: string; nominal: number | null }
+  | { type: "hutang_bayar"; orang: string; nominal: number | null }
+  | { type: "patungan"; barang: string; nominal: number | null; orang: string[] }
+  | { type: "koreksi_masuk"; nominal: number | null }
+  | { type: "aktivitas" }
+  | { type: "rinci" }
+  | { type: "abaikan" }
   | { type: "unknown" };
 
 /** Nama amplop yang dimengerti di perintah `pindah`. */
@@ -80,12 +98,51 @@ const SIMPLE: [RegExp, ParsedMessage][] = [
   [/^(rekap|rekap minggu ini|minggu ini|ringkasan)$/, { type: "rekap" }],
   [/^(laporan|laporan minggu ini)$/, { type: "laporan" }],
   [/^(jatah|jatah hari ini|jatah makan)$/, { type: "jatah" }],
+  [/^(proyeksi|ramalan|prediksi|forecast)$/, { type: "proyeksi" }],
+  [/^(saran|autopilot|saran mingguan)$/, { type: "saran" }],
+  [/^(pola|analisis|insight|kebiasaan)$/, { type: "pola" }],
+  [/^(skor|level|prestasi|tantangan|lencana|badge)$/, { type: "skor" }],
+  [/^(utang|hutang|piutang|daftar utang|daftar hutang)$/, { type: "hutang_list" }],
+  [/^(aktivitas|log|riwayat aktivitas)$/, { type: "aktivitas" }],
+  [/^(rinci|rincian|per item)$/, { type: "rinci" }],
+  [/^(abaikan|biarin|skip aja)$/, { type: "abaikan" }],
 ];
+
+const KELUARGA = "ayah|bapak|papa|abah|papi|bokap|ibu|mama|bunda|umi|mami|nyokap|om|tante|kakak|kak|abang|nenek|kakek|paman|bibi";
+const KIRIMAN_RE = [
+  // "ayah kirim 100k", "ayah tf 100rb", "bapak transfer 50k"
+  new RegExp(`^(${KELUARGA})\\s+(?:kirim|ngirim|tf|transfer|ngasih|kasih|nambahin|nambah)(?:\\s+(?:uang|duit))?\\s+(.+)$`),
+  // "kiriman ayah 100k", "dari ayah 100k", "tf dari ayah 100k", "dapet dari ayah 100k"
+  new RegExp(`^(?:kiriman|tf|transfer|dapet|dapat|dikirim)?\\s*(?:dari\\s+)?(${KELUARGA})\\s+(.+)$`),
+  // "kiriman 100k dari ayah", "dapet 100k dari om"
+  new RegExp(`^(?:kiriman|tambahan|dapet|dapat|dikirim|tf|transfer)\\s+(.+?)\\s+dari\\s+([a-z]+)$`),
+];
+const REKON_RE = /^(?:saldo asli|cek saldo|uang (?:gw|gue|aku|asli)|rekon|rekonsiliasi|cocokin|cocokkan|total uang)\s+(.+)$/;
+const KALAU_BELI_RE = /^(?:kalau|kalo|klo|gimana kalau|gmn kalo)\s+(?:beli|jajan)\s+(.+)$/;
+const KALAU_MASUK_RE = /^(?:kalau|kalo|klo)\s+(?:uang\s+)?masuk(?:nya)?(?:\s+cuma)?\s+(\S+)(?:\s+(?:selama\s+)?(\d+)\s+minggu)?$/;
+const KOREKSI_MASUK_RE = /^(?:koreksi|ralat|ubah|ganti)\s+(?:uang\s+)?masuk(?:\s+jadi)?\s+(.+)$/;
+const NAMA = "([a-z]{2,15})";
+const PIUTANG_BARU = [
+  new RegExp(`^(?:pinjemin|minjemin|pinjamkan|pinjamin|talangin|nalangin)\\s+${NAMA}\\s+(.+)$`),
+  new RegExp(`^${NAMA}\\s+(?:pinjem|minjem|pinjam|ngutang|utang|ngebon)\\s+(.+)$`),
+];
+const HUTANG_BARU = [new RegExp(`^(?:pinjem|minjem|pinjam|ngutang|utang|hutang)\\s+(?:ke|sama|dari)\\s+${NAMA}\\s+(.+)$`)];
+const PIUTANG_BAYAR = new RegExp(`^${NAMA}\\s+(?:bayar|balikin|ngembaliin|kembaliin|lunas|lunasin|nyicil|cicil)(?:\\s+(?:utang|utangnya))?(?:\\s+(.+))?$`);
+const HUTANG_BAYAR = [
+  new RegExp(`^(?:bayar|lunasin|nyicil|cicil)\\s+(?:utang|hutang)\\s+(?:ke\\s+)?${NAMA}(?:\\s+(.+))?$`),
+  new RegExp(`^(?:balikin|kembaliin|ngembaliin)\\s+(?:uang\\s+)?(?:ke\\s+)?${NAMA}(?:\\s+(.+))?$`),
+];
+const PATUNGAN_RE = /^(?:patungan|patung|urunan|split)\s+(.+?)\s+(\S+)\s+(?:sama|bareng|dengan|ama|bagi)\s+(.+)$/;
+const BUKAN_NAMA = new Set(["beli", "bayar", "paylater", "kirim", "masuk", "pindah", "sisa", "mau", "kalau", "kalo", "patungan", "ubah", "batal", "utang", "hutang", "uang", "duit"]);
+
+function nominalOrNull(s: string | undefined): number | null {
+  return s ? parseAmount(s.trim()) : null;
+}
 
 const PINDAH_RE = /^pindah\s+(\S+(?:\s?(?:k|rb|ribu|jt|juta)\b)?)\s+(?:dari\s+)?(.+?)\s+ke\s+(.+?)(?:\s+(?:alasan|karena|krn|soalnya|buat|untuk)\s+(.+))?$/;
 const UBAH_RE = /^(ubah|ganti|koreksi|ralat)(?:\s+terakhir)?(?:\s+(?:jadi|ke))?\s+(.+)$/;
 
-const MASUK_RE = /^(masuk|gajian|gajih|gaji|uang masuk|duit masuk|transfer masuk|kiriman)(?:\s+(.*))?$/;
+const MASUK_RE = /^(masuk|gajian|gajih|gaji|uang masuk|duit masuk|uang mingguan)(?:\s+(.*))?$/;
 const BAYAR_PAYLATER_RE = /^(bayar|lunasin|lunas|bayarin)\s+paylater(?:\s+(.*))?$/;
 
 /** Pisah beberapa item dalam satu pesan: "tempe 5k sama telur 14k", "a 1k, b 2k", baris baru, "+". */
@@ -132,6 +189,52 @@ export function parseMessage(raw: string, dict: CategoryDictionary = DEFAULT_DIC
 
   for (const [re, msg] of SIMPLE) if (re.test(t)) return msg;
   if (/^[1-9]$/.test(t)) return { type: "pilihan", n: Number(t) };
+
+  const koreksi = KOREKSI_MASUK_RE.exec(t);
+  if (koreksi) return { type: "koreksi_masuk", nominal: nominalOrNull(koreksi[1]) };
+
+  const kalauMasuk = KALAU_MASUK_RE.exec(t);
+  if (kalauMasuk) return { type: "kalau_masuk", nominal: nominalOrNull(kalauMasuk[1]), minggu: kalauMasuk[2] ? Math.min(8, Number(kalauMasuk[2])) : 1 };
+  const kalauBeli = KALAU_BELI_RE.exec(t);
+  if (kalauBeli) {
+    const a = pickAmount(kalauBeli[1]);
+    const barang = a ? `${kalauBeli[1].slice(0, a.start)} ${kalauBeli[1].slice(a.end)}`.replace(/\s+/g, " ").trim() : kalauBeli[1];
+    return { type: "kalau_beli", barang: barang.replace(/\?$/, "").trim() || "barang", nominal: a?.value ?? null };
+  }
+
+  const rekon = REKON_RE.exec(t);
+  if (rekon) return { type: "rekon", nominal: nominalOrNull(rekon[1]) };
+
+  for (const [i, re] of KIRIMAN_RE.entries()) {
+    const m = re.exec(t);
+    if (!m) continue;
+    const [dari, nom] = i === 2 ? [m[2], m[1]] : [m[1], m[2]];
+    const nominal = nominalOrNull(nom);
+    if (nominal || i === 0) return { type: "kiriman", dari, nominal };
+  }
+
+  const kirimanPolos = /^(?:kiriman|tambahan|uang tambahan|uang kiriman|tf masuk|transferan)\s+(\S+)$/.exec(t);
+  if (kirimanPolos) return { type: "kiriman", dari: null, nominal: nominalOrNull(kirimanPolos[1]) };
+
+  const patungan = PATUNGAN_RE.exec(t);
+  if (patungan) {
+    const orang = patungan[3].split(/\s*(?:,|dan|&|\s)\s*/).filter((x) => /^[a-z]{2,15}$/.test(x));
+    return { type: "patungan", barang: patungan[1], nominal: nominalOrNull(patungan[2]), orang };
+  }
+  for (const re of HUTANG_BARU) {
+    const m = re.exec(t);
+    if (m) return { type: "hutang_baru", orang: m[1], nominal: nominalOrNull(m[2]) };
+  }
+  for (const re of HUTANG_BAYAR) {
+    const m = re.exec(t);
+    if (m && !BUKAN_NAMA.has(m[1])) return { type: "hutang_bayar", orang: m[1], nominal: nominalOrNull(m[2]) };
+  }
+  for (const re of PIUTANG_BARU) {
+    const m = re.exec(t);
+    if (m && !BUKAN_NAMA.has(m[1]) && !detectCategory(m[1], dict)) return { type: "piutang_baru", orang: m[1], nominal: nominalOrNull(m[2]) };
+  }
+  const pb = PIUTANG_BAYAR.exec(t);
+  if (pb && !BUKAN_NAMA.has(pb[1]) && !detectCategory(pb[1], dict)) return { type: "piutang_bayar", orang: pb[1], nominal: nominalOrNull(pb[2]) };
 
   const masuk = MASUK_RE.exec(t);
   if (masuk) return { type: "masuk", nominal: masuk[2] ? parseAmount(masuk[2]) : null };

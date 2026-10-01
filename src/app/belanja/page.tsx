@@ -6,6 +6,8 @@ import { Badge, Card, PageHeader, Stat } from "@/components/ui";
 import { prisma } from "@/lib/db";
 import { rp } from "@/lib/money";
 import { getShoppingWeek } from "@/lib/services/shopping";
+import { hargaAsli } from "@/lib/services/prices";
+import { pakaiHargaAsli } from "../actions-plus";
 import { HARI, fmtTanggalPanjang } from "@/lib/time";
 import { centangBelanja, hapusItemBelanja, simpanItemBelanja, simpanMenu } from "../actions-lain";
 
@@ -14,6 +16,7 @@ export const metadata = { title: "Belanja mingguan" };
 export default async function BelanjaPage() {
   const w = await getShoppingWeek(prisma, new Date());
   const lauk = await prisma.laukRotasi.findMany({ orderBy: { mingguKe: "asc" } });
+  const harga = (await hargaAsli(prisma, new Date())).filter((h) => Math.abs(h.median - h.rencana) >= 1000);
   const aktif = w.items.filter((i) => i.aktif);
   const urutHari = [0, 1, 2, 3, 4, 5, 6];
 
@@ -112,6 +115,28 @@ export default async function BelanjaPage() {
               ))}
             </ul>
           </Card>
+          {harga.length > 0 && (
+            <Card title="Harga asli vs rencana" icon="trending-up">
+              <p className="mb-2 text-xs text-muted">Dari catatan belanja 60 hari terakhir.</p>
+              <ul className="divide-y divide-line">
+                {harga.map((h) => (
+                  <li key={h.itemId} className="flex items-center justify-between gap-2 py-2 text-sm">
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{h.nama}</span>
+                      <span className="num text-xs text-muted">
+                        rencana {rp(h.rencana)} · biasanya {rp(h.median)} ({h.jumlahData}×)
+                      </span>
+                    </span>
+                    <form action={pakaiHargaAsli}>
+                      <input type="hidden" name="itemId" value={h.itemId} />
+                      <input type="hidden" name="harga" value={h.saranHargaSatuan} />
+                      <button className="btn-secondary btn-sm">Pakai</button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
           <Card title="Menu hari ini" icon="utensils">
             <ul className="space-y-1.5 text-sm">
               {w.menu

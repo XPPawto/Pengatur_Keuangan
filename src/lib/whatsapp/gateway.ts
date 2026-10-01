@@ -7,6 +7,8 @@ export interface IncomingWaMessage {
   nomor: string;
   text: string;
   waktu: Date;
+  /** ada kalau pesannya gambar (mis. foto struk); dipanggil hanya saat dibutuhkan */
+  gambar?: () => Promise<Buffer>;
 }
 
 export interface WhatsAppGateway {

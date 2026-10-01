@@ -4,6 +4,8 @@ import { addDays, diffDays, sundayOnOrBefore, wibDate } from "../time";
 import { AppError } from "./errors";
 import { ENVELOPE_KODE, type EnvelopeKode } from "../types";
 import { getBalances } from "./envelopes";
+import { logActivity, type Actor } from "./activity-log";
+import { rp } from "../money";
 
 export type Period = NonNullable<Awaited<ReturnType<typeof getCurrentPeriod>>>;
 
@@ -89,32 +91,39 @@ export async function getPeriodAllocations(db: Db, periodId: number): Promise<Al
 }
 
 /**
- * Konfirmasi periode: tutup periode aktif sebelumnya (sisa Makan pindah ke Darurat), lalu aktifkan yang baru.
+ * Konfirmasi periode: tutup periode aktif sebelumnya (sisa Makan & Paket data pindah ke Darurat), lalu aktifkan yang baru.
  */
-export async function confirmPeriod(db: Db, periodId: number, now: Date) {
+export async function confirmPeriod(db: Db, periodId: number, now: Date, actor: Actor = { oleh: "web", sumber: "web" }) {
   const period = await db.period.findUnique({ where: { id: periodId } });
   if (!period || period.status !== "menunggu") throw new AppError("not_found", "Periode tidak ditemukan.");
 
   const olds = await db.period.findMany({ where: { status: "aktif" } });
   const envs = await db.envelope.findMany();
-  const makan = envs.find((e) => e.kode === "makan");
   const darurat = envs.find((e) => e.kode === "darurat");
   let sisaMakanPindah = 0;
+  let sisaDataPindah = 0;
+  const transferIds: number[] = [];
 
   for (const old of olds) {
-    if (makan && darurat) {
-      const b = (await getBalances(db, old.id)).find((x) => x.kode === "makan");
-      if (b && b.saldo > 0) {
-        await db.transfer.create({
+    if (darurat) {
+      const balances = await getBalances(db, old.id);
+      for (const kode of ["makan", "data"] as const) {
+        const env = envs.find((e) => e.kode === kode);
+        const b = balances.find((x) => x.kode === kode);
+        if (!env || !b || b.saldo <= 0) continue;
+        const tr = await db.transfer.create({
           data: {
             periodId: old.id,
-            dariEnvelopeId: makan.id,
+            dariEnvelopeId: env.id,
             keEnvelopeId: darurat.id,
             nominal: b.saldo,
-            alasan: "Sisa Makan akhir minggu pindah ke Darurat",
+            alasan: `Sisa ${env.nama} akhir minggu pindah ke Darurat`,
+            dibuatPada: now,
           },
         });
-        sisaMakanPindah += b.saldo;
+        transferIds.push(tr.id);
+        if (kode === "makan") sisaMakanPindah += b.saldo;
+        else sisaDataPindah += b.saldo;
       }
     }
     await db.period.update({ where: { id: old.id }, data: { status: "selesai" } });
@@ -124,15 +133,24 @@ export async function confirmPeriod(db: Db, periodId: number, now: Date) {
     where: { id: periodId },
     data: { status: "aktif", dikonfirmasiPada: now },
   });
-  return { period: updated, sisaMakanPindah };
+  await logActivity(db, actor, "uang_masuk", `Uang mingguan ${rp(updated.pemasukan)} dikonfirmasi (periode ${updated.tanggalMulai})`, {
+    undo: { t: "batal_periode", periodId, transferIds, periodeLamaIds: olds.map((o) => o.id) },
+    now,
+  });
+  return { period: updated, sisaMakanPindah, sisaDataPindah };
 }
 
 export async function cancelPendingPeriod(db: Db, periodId: number) {
   await db.period.deleteMany({ where: { id: periodId, status: "menunggu" } });
 }
 
-/** Tambah uang ekstra (bonus) ke periode aktif pada amplop tertentu. */
-export async function addBonus(db: Db, periodId: number, bagian: Partial<Record<EnvelopeKode, number>>) {
+/** Tambah uang ke periode (uang ekstra, kiriman, piutang kembali) pada amplop tertentu; dicatat di kolom `tambahan`. */
+export async function addBonus(
+  db: Db,
+  periodId: number,
+  bagian: Partial<Record<EnvelopeKode, number>>,
+  log?: { actor: Actor; ringkasan: string; now: Date; aksi?: string },
+) {
   const envs = await db.envelope.findMany();
   let total = 0;
   for (const [kode, nominal] of Object.entries(bagian) as [EnvelopeKode, number][]) {
@@ -145,8 +163,38 @@ export async function addBonus(db: Db, periodId: number, bagian: Partial<Record<
     });
     total += nominal;
   }
-  await db.period.update({ where: { id: periodId }, data: { pemasukan: { increment: total } } });
+  await db.period.update({ where: { id: periodId }, data: { tambahan: { increment: total } } });
+  if (log) {
+    await logActivity(db, log.actor, log.aksi ?? "uang_ekstra", log.ringkasan, {
+      undo: { t: "kurangi_alokasi", periodId, bagian: bagian as Record<string, number> },
+      now: log.now,
+    });
+  }
   return total;
+}
+
+/**
+ * Koreksi nominal uang mingguan yang sudah dikonfirmasi (mis. salah ketik `masuk 30`).
+ * Selisihnya masuk/keluar dari amplop Darurat (amplop sisa), amplop lain tidak berubah.
+ */
+export async function setPemasukan(db: Db, periodId: number, nominal: number, now: Date, actor: Actor = { oleh: "web", sumber: "web" }) {
+  if (!Number.isInteger(nominal) || nominal <= 0) throw new AppError("invalid", "Nominal pemasukan tidak valid.");
+  const period = await db.period.findUnique({ where: { id: periodId } });
+  if (!period) throw new AppError("not_found", "Periode tidak ditemukan.");
+  const alokasiSebelum = await getPeriodAllocations(db, periodId);
+  const selisih = nominal - period.pemasukan;
+  if (selisih === 0) return { selisih: 0 };
+  const darurat = await db.envelope.findUniqueOrThrow({ where: { kode: "darurat" } });
+  await db.allocation.update({
+    where: { periodId_envelopeId: { periodId, envelopeId: darurat.id } },
+    data: { nominal: Math.max(0, alokasiSebelum.darurat + selisih) },
+  });
+  await db.period.update({ where: { id: periodId }, data: { pemasukan: nominal } });
+  await logActivity(db, actor, "koreksi_pemasukan", `Koreksi uang mingguan ${rp(period.pemasukan)} → ${rp(nominal)} (selisih lewat Darurat)`, {
+    undo: { t: "pemasukan", periodId, pemasukanSebelum: period.pemasukan, alokasiSebelum },
+    now,
+  });
+  return { selisih };
 }
 
 /** Sisa hari dalam periode termasuk hari ini. 0 kalau periode sudah lewat. */
@@ -168,7 +216,7 @@ export async function setAllocation(db: Db, periodId: number, kode: EnvelopeKode
   });
   const all = await db.allocation.findMany({ where: { periodId } });
   const period = await db.period.findUniqueOrThrow({ where: { id: periodId } });
-  return { totalAlokasi: all.reduce((s, a) => s + a.nominal, 0), pemasukan: period.pemasukan };
+  return { totalAlokasi: all.reduce((s, a) => s + a.nominal, 0), pemasukan: period.pemasukan + period.tambahan };
 }
 
 export async function listPlans(db: Db) {

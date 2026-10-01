@@ -5,6 +5,8 @@ import { getDailyStatus } from "./daily";
 import { getBalances } from "./envelopes";
 import { getCurrentPeriod } from "./periods";
 import { recordExpense } from "./transactions";
+import { logActivity, type Actor } from "./activity-log";
+import { rp } from "../money";
 
 const TUNDA_MS = 24 * 3600_000;
 
@@ -49,16 +51,22 @@ export async function createHold(db: Db, h: { barang: string; nominal: number; e
 }
 
 /** Putuskan hasil tahan belanja. "beli" mencatat pengeluaran; "batal" dihitung sebagai uang yang diselamatkan. */
-export async function decideHold(db: Db, id: number, keputusan: "beli" | "batal", now: Date, sumber: Sumber) {
+export async function decideHold(db: Db, id: number, keputusan: "beli" | "batal", now: Date, sumber: Sumber, actor?: Actor) {
   const h = await db.holdRequest.findUnique({ where: { id } });
   if (!h) throw new AppError("not_found", "Catatan tahan belanja tidak ditemukan.");
   if (h.hasil !== "menunggu") throw new AppError("invalid", `Udah diputuskan: ${h.hasil}.`);
   let saldoSetelah: number | null = null;
+  let txId: number | null = null;
   if (keputusan === "beli") {
-    const r = await recordExpense(db, { kode: h.envelopeKode as EnvelopeKode, nominal: h.nominal, catatan: h.barang, sumber, now });
+    const r = await recordExpense(db, { kode: h.envelopeKode as EnvelopeKode, nominal: h.nominal, catatan: h.barang, sumber, now, log: false });
     saldoSetelah = r.balance.saldo;
+    txId = r.id;
   }
   const updated = await db.holdRequest.update({ where: { id }, data: { hasil: keputusan, diputuskanPada: now } });
+  await logActivity(db, actor ?? { oleh: sumber, sumber }, "tahan_belanja", keputusan === "beli" ? `Jadi beli ${h.barang} ${rp(h.nominal)}` : `Tidak jadi beli ${h.barang}, ${rp(h.nominal)} diselamatkan`, {
+    undo: { t: "hold_menunggu", holdId: id, txId },
+    now,
+  });
   return { hold: updated, saldoSetelah };
 }
 
