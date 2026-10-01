@@ -2,7 +2,16 @@ import fs from "node:fs";
 import type { WASocket } from "@whiskeysockets/baileys";
 import pino from "pino";
 import { normalizePhone } from "../whitelist";
-import type { GatewayDriver, GatewayState, IncomingWaMessage, WaMode } from "./gateway";
+import type { GatewayDriver, GatewayState, IncomingWaMessage, OpsiKirim, WaMode } from "./gateway";
+
+/** Bagian pesan Baileys yang dibaca untuk pesan grup (bentuk lengkapnya tidak perlu diketahui di sini). */
+interface PesanMentah {
+  key: { remoteJid?: string | null; fromMe?: boolean | null };
+  pushName?: string | null;
+  messageTimestamp?: unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  message?: any;
+}
 
 type Baileys = typeof import("@whiskeysockets/baileys");
 
@@ -133,7 +142,13 @@ export class BaileysDriver implements GatewayDriver {
       if (type !== "notify") return;
       for (const m of messages) {
         const jid = m.key.remoteJid ?? "";
-        if (m.key.fromMe || !jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
+        if (m.key.fromMe || !jid || jid === "status@broadcast") continue;
+        if (jid.endsWith("@g.us")) {
+          const unduh = async (pesan: unknown) =>
+            (await baileys.downloadMediaMessage(pesan as never, "buffer", {}, { logger: pino({ level: "silent" }), reuploadRequest: sock.updateMediaMessage })) as Buffer;
+          this.terimaGrup(m, jid, unduh);
+          continue;
+        }
         const img = m.message?.imageMessage;
         const text = m.message?.conversation ?? m.message?.extendedTextMessage?.text ?? img?.caption ?? "";
         if (!text && !img) continue;
@@ -150,6 +165,42 @@ export class BaileysDriver implements GatewayDriver {
     });
   }
 
+  /** Pesan grup: hanya teks. Yang memutuskan grup mana yang dilayani adalah lapisan atas (WaManager), bukan driver. */
+  private terimaGrup(m: PesanMentah, jid: string, unduh: (pesan: unknown) => Promise<Buffer>) {
+    const teks: string = m.message?.conversation ?? m.message?.extendedTextMessage?.text ?? m.message?.imageMessage?.caption ?? "";
+    if (!teks.trim()) return;
+    const kunci = m.key as { participant?: string; participantAlt?: string };
+    // pengirim @lid: pakai nomor asli kalau tersedia
+    const pengirim = (kunci.participant ?? "").endsWith("@lid") ? kunci.participantAlt : kunci.participant;
+    if (!pengirim) return;
+    const nomorDari = (j?: string | null) => (j ? j.split("@")[0].split(":")[0] : "");
+    const bot = [this.sock?.user?.id, (this.sock?.user as { lid?: string } | undefined)?.lid].map(nomorDari).filter(Boolean);
+    const konteks = m.message?.extendedTextMessage?.contextInfo as { mentionedJid?: string[]; participant?: string } | undefined;
+    const disapa = !!konteks && ((konteks.mentionedJid ?? []).some((j) => bot.includes(nomorDari(j))) || bot.includes(nomorDari(konteks.participant)));
+    const waktu = m.messageTimestamp ? new Date(Number(m.messageTimestamp) * 1000) : new Date();
+    // pesan yang dibalas (teks / foto) supaya "/ai terjemahkan" bisa dipakai di atas pesan siapa pun
+    const ctx = (m.message?.extendedTextMessage?.contextInfo ?? m.message?.imageMessage?.contextInfo) as
+      | { quotedMessage?: Record<string, any>; stanzaId?: string; participant?: string } // eslint-disable-line @typescript-eslint/no-explicit-any
+      | undefined;
+    const q = ctx?.quotedMessage;
+    const kutipan = q
+      ? {
+          teks: String(q.conversation ?? q.extendedTextMessage?.text ?? q.imageMessage?.caption ?? ""),
+          dariBot: bot.includes(nomorDari(ctx?.participant)),
+          gambar: q.imageMessage ? () => unduh({ key: { remoteJid: jid, id: ctx?.stanzaId, participant: ctx?.participant }, message: q }) : undefined,
+        }
+      : undefined;
+    const pesan: IncomingWaMessage = {
+      nomor: normalizePhone(pengirim),
+      text: teks,
+      waktu,
+      // foto yang dikirim bersama /ai (caption)
+      gambar: m.message?.imageMessage ? () => unduh(m) : undefined,
+      grup: { jid, nama: m.pushName ?? undefined, disapa, pesan: m, kutipan },
+    };
+    for (const h of this.msgHandlers) void Promise.resolve(h(pesan)).catch(() => {});
+  }
+
   private scheduleReconnect(gen: number) {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     const delay = Math.min(30_000, 2000 * 2 ** this.retry++);
@@ -158,13 +209,18 @@ export class BaileysDriver implements GatewayDriver {
     }, delay);
   }
 
-  async sendMessage(nomor: string, text: string) {
+  private tujuan(nomor: string) {
+    return nomor.includes("@") ? nomor : `${normalizePhone(nomor)}@s.whatsapp.net`;
+  }
+
+  async sendMessage(nomor: string, text: string, opsi?: OpsiKirim) {
     if (!this.sock) throw new Error("WhatsApp belum terhubung");
-    await this.sock.sendMessage(`${normalizePhone(nomor)}@s.whatsapp.net`, { text });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await this.sock.sendMessage(this.tujuan(nomor), { text }, opsi?.kutip ? { quoted: opsi.kutip as any } : undefined);
   }
 
   async mengetik(nomor: string) {
-    await this.sock?.sendPresenceUpdate("composing", `${normalizePhone(nomor)}@s.whatsapp.net`);
+    await this.sock?.sendPresenceUpdate("composing", this.tujuan(nomor));
   }
 
   async stop() {

@@ -1,3 +1,4 @@
+import { prosesPesanGrup } from "../ai/grup";
 import type { PrismaClient } from "@prisma/client";
 import { handleMessage } from "../bot/handler";
 import { isOwner, normalizePhone } from "../whitelist";
@@ -138,7 +139,20 @@ export class WaManager {
     }
   }
 
+  /** Pesan grup: hanya dilayani modul AI grup (asisten umum, tanpa data DompetKos). Tidak pernah masuk ke handleMessage. */
+  private async onGrup(m: IncomingWaMessage) {
+    const g = m.grup!;
+    try {
+      const mengetik = this.driver.mengetik ? () => void this.driver.mengetik!(g.jid).catch(() => {}) : undefined;
+      const balasan = await prosesPesanGrup(this.db, m, new Date(), { mengetik });
+      if (balasan) await this.driver.sendMessage(g.jid, balasan, { kutip: g.pesan });
+    } catch (e) {
+      this.log(`gagal memproses pesan grup: ${e}`); // isi pesan sengaja tidak dicatat
+    }
+  }
+
   private async onIncoming(m: IncomingWaMessage) {
+    if (m.grup) return this.onGrup(m);
     try {
       const mengetik = this.driver.mengetik ? () => void this.driver.mengetik!(m.nomor).catch(() => {}) : undefined;
       const replies = await handleMessage(this.db, { nomor: m.nomor, text: m.text, now: m.waktu, gambar: m.gambar, mengetik });

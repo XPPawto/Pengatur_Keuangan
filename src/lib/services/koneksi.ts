@@ -1,7 +1,9 @@
 import type { Db } from "../db";
 import { addDays, fromWib, wibDate } from "../time";
 import { listRecipients } from "./recipients";
-import { getSetting } from "./settings";
+import { getSetting, getSettingNumber } from "./settings";
+import { penyediaTersedia, urutanGiliran } from "../ai/grup";
+import type { Penyedia } from "../ai/panggil";
 import { LABEL_FITUR, statusAI, type FiturAI } from "../ai/panggil";
 
 export type StatusWa = "terhubung" | "terputus" | "menunggu_pairing";
@@ -39,12 +41,27 @@ export interface DataKoneksi {
   fitur: { kode: FiturAI; label: string; hariIni: number; per: Record<string, number>; aktif: boolean }[];
   pesanHariIni: { masuk: number; keluar: number };
   antrean: number;
+  /** AI grup WhatsApp: asisten umum untuk satu grup, penyedia bergiliran (round robin) */
+  grup: {
+    /** grup sudah dipilih */
+    dipilih: boolean;
+    aktif: boolean;
+    /** jawaban yang berhasil hari ini */
+    hariIni: number;
+    batas: number;
+    /** jawaban berhasil hari ini per penyedia */
+    per: Record<string, number>;
+    /** penyedia yang tersambung = ikut bergiliran, urut: Claude, Gemini, OpenRouter */
+    roda: Penyedia[];
+    /** penyedia yang mendapat giliran berikutnya */
+    berikut: Penyedia | null;
+  };
 }
 
 /** Semua yang tersambung ke DompetKos dalam satu potret (peta di halaman Koneksi, dipoll tiap beberapa detik). */
 export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
   const awal = fromWib(wibDate(now));
-  const [c, ai, penerima, model, perFitur, masuk, keluar, antrean, saklar] = await Promise.all([
+  const [c, ai, penerima, model, perFitur, masuk, keluar, antrean, saklar, grupOk, roda, putaran] = await Promise.all([
     db.waConnection.findUnique({ where: { id: 1 } }),
     statusAI(db, now),
     listRecipients(db),
@@ -54,7 +71,11 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
     db.messageLog.count({ where: { arah: "keluar", waktu: { gte: awal } } }),
     db.outbox.count({ where: { status: "antri" } }),
     Promise.all(FITUR_PETA.map((f) => getSetting(db, f.saklar))),
+    db.aiCall.groupBy({ by: ["penyedia"], where: { fitur: "chat_grup", status: "ok", waktu: { gte: awal } }, _count: { _all: true } }),
+    penyediaTersedia(db),
+    getSettingNumber(db, "grup_ai_putaran"),
   ]);
+  const [grupJid, grupAktif, grupBatas] = await Promise.all([getSetting(db, "grup_ai_jid"), getSetting(db, "grup_ai_aktif"), getSettingNumber(db, "grup_ai_batas_harian")]);
   const aktif = penerima.filter((r) => r.aktif);
   return {
     wa: {
@@ -91,6 +112,15 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
     })),
     pesanHariIni: { masuk, keluar },
     antrean,
+    grup: {
+      dipilih: !!grupJid,
+      aktif: !!grupJid && grupAktif === "1",
+      hariIni: grupOk.reduce((n, x) => n + x._count._all, 0),
+      batas: grupBatas, // 0 = tanpa batas
+      per: Object.fromEntries(grupOk.map((x) => [x.penyedia, x._count._all])),
+      roda,
+      berikut: urutanGiliran(roda, putaran)[0] ?? null,
+    },
   };
 }
 

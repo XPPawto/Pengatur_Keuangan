@@ -1,0 +1,535 @@
+import fs from "node:fs";
+import { PrismaClient } from "@prisma/client";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { HasilClaude } from "@/lib/ai/claude";
+import { aturDaftarGemini } from "@/lib/ai/gemini";
+import { adalahPertanyaan, BANTUAN, bersihkanBalasan, IDENTITAS, pertanyaanIdentitas, prosesPesanGrup, resetKeadaanGrup, SYSTEM_GRUP, urutanGiliran } from "@/lib/ai/grup";
+import { aturDaftarModel } from "@/lib/ai/openrouter";
+import { pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI } from "@/lib/ai/panggil";
+import { dataKoneksi } from "@/lib/services/koneksi";
+import { setSetting } from "@/lib/services/settings";
+import { fromWib } from "@/lib/time";
+import type { GatewayDriver, GatewayState, IncomingWaMessage, OpsiKirim, WaMode } from "@/lib/whatsapp/gateway";
+import { WaManager } from "@/lib/whatsapp/manager";
+import { resetDb } from "./helpers";
+
+const db = new PrismaClient();
+const at = (jam: number, menit = 0, detik = 0) => new Date(fromWib("2026-10-05", jam, menit).getTime() + detik * 1000);
+const ok = (teks: string): HasilClaude => ({ ok: true, teks, durasiMs: 3 });
+const rusak = (): HasilClaude => ({ ok: false, alasan: "belum_login", pesan: "token ditolak", durasiMs: 3 });
+const sibuk = (): HasilClaude => ({ ok: false, alasan: "sibuk", pesan: "high demand (UNAVAILABLE)", durasiMs: 3 });
+
+const OWNER = "6285163544535";
+const GRUP = "120363000000000001@g.us";
+const GRUP_LAIN = "120363000000000002@g.us";
+const OR_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
+
+let dipanggil: string[] = [];
+let prompts: string[] = [];
+let sistem: string[] = [];
+/** jalur file gambar yang diterima tiap panggilan penyedia (null = tanpa gambar) dan apakah filenya ada saat dipanggil */
+let jalurGambar: (string | null)[] = [];
+let gambarAda: (boolean | null)[] = [];
+let jawab: Record<"claude" | "gemini" | "openrouter", () => HasilClaude>;
+let pulih: (() => void)[] = [];
+
+beforeEach(async () => {
+  await resetDb(db);
+  resetKeadaanGrup();
+  aturDaftarGemini(["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"]);
+  aturDaftarModel([]);
+  dipanggil = [];
+  prompts = [];
+  sistem = [];
+  jalurGambar = [];
+  gambarAda = [];
+  jawab = { claude: () => ok("jawaban claude"), gemini: () => ok("jawaban gemini"), openrouter: () => ok("jawaban openrouter") };
+  pulih = [
+    setPenjalanAI(async (p) => (dipanggil.push("claude"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), jawab.claude())),
+    setPenjalanCadangan({
+      gemini: async (p) => (dipanggil.push("gemini"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), jawab.gemini()),
+      openrouter: async (p) => (dipanggil.push("openrouter"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), jawab.openrouter()),
+    }),
+  ];
+});
+afterEach(() => {
+  pulih.forEach((f) => f());
+  aturDaftarGemini(null);
+  aturDaftarModel(null);
+});
+afterAll(() => db.$disconnect());
+
+/** Sambungkan penyedia & aktifkan grup. `penyedia` = yang tersambung. */
+async function siapkan(penyedia: ("claude" | "gemini" | "openrouter")[] = ["claude", "gemini", "openrouter"], opsi: { mode?: string } = {}) {
+  if (penyedia.includes("claude")) await simpanTokenAI(db, "token-claude-tes-0123456789");
+  if (penyedia.includes("gemini")) await simpanKunciCadangan(db, "gemini", "AIzaSy-kunci-gemini-tes-0123456789");
+  if (penyedia.includes("openrouter")) {
+    await simpanKunciCadangan(db, "openrouter", "sk-or-v1-kunci-openrouter-tes-0123456789");
+    await setSetting(db, "ai_openrouter_model", OR_MODEL);
+  }
+  await setSetting(db, "grup_ai_jid", GRUP);
+  await setSetting(db, "grup_ai_aktif", "1");
+  if (opsi.mode) await setSetting(db, "grup_ai_mode", opsi.mode);
+}
+
+const kirim = (text: string, o: { jid?: string; nomor?: string; nama?: string; disapa?: boolean; now?: Date } = {}) =>
+  prosesPesanGrup(db, { nomor: o.nomor ?? "628111111111", text, waktu: o.now ?? at(12), grup: { jid: o.jid ?? GRUP, nama: o.nama ?? "Budi", disapa: o.disapa ?? false } }, o.now ?? at(12));
+
+describe("deteksi & pembersihan", () => {
+  it("adalahPertanyaan: tanda tanya / kata tanya; obrolan biasa bukan", () => {
+    for (const t of ["apa itu fotosintesis?", "bagaimana cara masak nasi goreng", "tolong terjemahkan ini ke inggris", "Kenapa langit biru", "can you explain recursion", "ibukota jepang?"]) expect(adalahPertanyaan(t), t).toBe(true);
+    for (const t of ["haha iya bener banget", "otw ya", "ok", "mantap gan", ""]) expect(adalahPertanyaan(t), t).toBe(false);
+  });
+
+  it("bersihkanBalasan: **tebal** → *tebal*, heading dibuang, dipotong kalau kepanjangan", () => {
+    expect(bersihkanBalasan("## Judul\n\n**Penting**: ini\n\n\n\nlagi")).toBe("Judul\n\n*Penting*: ini\n\nlagi");
+    const panjang = bersihkanBalasan("a".repeat(5000), 100);
+    expect(panjang).toHaveLength(100);
+    expect(panjang.endsWith("…")).toBe(true);
+  });
+
+  it("urutanGiliran: round robin di antara penyedia yang tersedia", () => {
+    const t = ["claude", "gemini", "openrouter"] as const;
+    expect([0, 1, 2, 3, 4, 5].map((n) => urutanGiliran(t, n)[0])).toEqual(["claude", "gemini", "openrouter", "claude", "gemini", "openrouter"]);
+    expect(urutanGiliran(t, 1)).toEqual(["gemini", "openrouter", "claude"]); // sisanya jadi cadangan berurutan
+    expect([0, 1, 2].map((n) => urutanGiliran(["gemini", "openrouter"], n)[0])).toEqual(["gemini", "openrouter", "gemini"]);
+    expect(urutanGiliran([], 3)).toEqual([]);
+  });
+});
+
+describe("pemilihan grup & perintah pemilik", () => {
+  it("grup lain & grup belum dipilih: diabaikan total (tidak membalas, tidak memanggil AI, tidak menyimpan)", async () => {
+    await siapkan();
+    expect(await kirim("/ai halo", { jid: GRUP_LAIN })).toBeNull();
+    await setSetting(db, "grup_ai_jid", "");
+    expect(await kirim("/ai halo")).toBeNull();
+    expect(dipanggil).toEqual([]);
+    expect(await db.aiChat.count()).toBe(0);
+  });
+
+  it("`!aigrup aktif`: hanya pemilik yang bisa; grup tempat perintah diketik jadi grup AI", async () => {
+    await siapkan(["claude", "gemini"]);
+    await setSetting(db, "grup_ai_jid", "");
+    await setSetting(db, "grup_ai_aktif", "0");
+    expect(await kirim("!aigrup aktif", { nomor: "628111111111" })).toBeNull(); // bukan pemilik: tanpa balasan
+    expect(await db.setting.findUnique({ where: { kunci: "grup_ai_jid" } })).toMatchObject({ nilai: "" });
+
+    const r = await kirim("!aigrup aktif", { nomor: OWNER, jid: GRUP_LAIN });
+    expect(r).toContain("AI grup aktif");
+    expect(r).toContain("/ai");
+    expect(r).toContain("Claude → Gemini"); // penyedia yang tersambung
+    expect(await db.setting.findUnique({ where: { kunci: "grup_ai_jid" } })).toMatchObject({ nilai: GRUP_LAIN });
+    expect(await db.setting.findUnique({ where: { kunci: "grup_ai_aktif" } })).toMatchObject({ nilai: "1" });
+  });
+
+  it("perintah lain hanya berlaku di grup yang dipilih; mode, mati, status, reset", async () => {
+    await siapkan();
+    expect(await kirim("!aigrup mati", { nomor: OWNER, jid: GRUP_LAIN })).toBeNull(); // grup lain: tidak berefek
+    expect(await db.setting.findUnique({ where: { kunci: "grup_ai_aktif" } })).toMatchObject({ nilai: "1" });
+
+    expect(await kirim("!aigrup mode semua", { nomor: OWNER })).toContain("setiap pesan");
+    expect(await kirim("!aigrup mode ngawur", { nomor: OWNER })).toContain("Pakai:");
+    expect(await kirim("!aigrup status", { nomor: OWNER })).toContain("mode semua");
+    expect(await kirim("!aigrup mode semua", { nomor: "628111111111" })).toBeNull(); // bukan pemilik
+
+    expect(await kirim("!aigrup mati", { nomor: OWNER })).toContain("dimatikan");
+    expect(await kirim("/ai halo")).toBeNull(); // sudah mati
+    expect(dipanggil).toEqual([]);
+  });
+});
+
+describe("pemicu /ai", () => {
+  it("bawaan: hanya /ai (atau bot di-mention / pesan bot dibalas); pesan lain diabaikan", async () => {
+    await siapkan(["claude"]);
+    expect(await kirim("apa itu fotosintesis?")).toBeNull(); // pertanyaan tanpa /ai
+    expect(await kirim("haha iya")).toBeNull();
+    expect(dipanggil).toEqual([]);
+    expect(await kirim("/ai apa itu fotosintesis?")).toContain("jawaban claude");
+    expect(await kirim("lanjutkan dong", { disapa: true, nomor: "628222222222" })).toContain("jawaban claude");
+    expect(dipanggil).toEqual(["claude", "claude"]);
+  });
+
+  it("/AI huruf besar & titik dua; teks tanpa awalan yang menyerupai (/aidan) tidak memicu", async () => {
+    await siapkan(["claude"]);
+    expect(await kirim("/AI: siapa presiden pertama?")).toContain("jawaban claude");
+    expect(await kirim("/aidan apa kabar?")).toBeNull();
+    expect(prompts[0]).toContain("siapa presiden pertama?");
+    expect(prompts[0]).not.toContain("/AI"); // awalan tidak ikut dikirim ke model
+  });
+
+  it("/ai tanpa pertanyaan: petunjuk, AI tidak dipanggil", async () => {
+    await siapkan(["claude"]);
+    expect(await kirim("/ai")).toContain("Tulis pertanyaannya");
+    expect(dipanggil).toEqual([]);
+  });
+
+  it("mode pertanyaan: pesan berbentuk pertanyaan juga dijawab; mode semua: setiap pesan teks", async () => {
+    await siapkan(["claude"], { mode: "pertanyaan" });
+    expect(await kirim("apa itu fotosintesis?")).toContain("jawaban claude");
+    expect(await kirim("haha iya")).toBeNull();
+    await setSetting(db, "grup_ai_mode", "semua");
+    expect(await kirim("haha iya bener", { nomor: "628222222222" })).toContain("jawaban claude");
+  });
+});
+
+describe("round robin antar penyedia", () => {
+  it("tiga penyedia bergiliran Claude → Gemini → OpenRouter → Claude …", async () => {
+    await siapkan();
+    for (let i = 0; i < 6; i++) await kirim(`/ai pertanyaan ke-${i}`, { nomor: `62811000000${i}`, now: at(12, i) });
+    expect(dipanggil).toEqual(["claude", "gemini", "openrouter", "claude", "gemini", "openrouter"]);
+  });
+
+  it("giliran dilanjutkan setelah bot restart (disimpan di database)", async () => {
+    await siapkan();
+    await kirim("/ai satu", { nomor: "628111111101" });
+    await kirim("/ai dua", { nomor: "628111111102" });
+    resetKeadaanGrup(); // simulasi bot restart: memori hilang
+    await kirim("/ai tiga", { nomor: "628111111103" });
+    expect(dipanggil).toEqual(["claude", "gemini", "openrouter"]);
+  });
+
+  it("penyedia yang belum tersambung dilewati dari giliran", async () => {
+    await siapkan(["gemini", "openrouter"]);
+    for (let i = 0; i < 4; i++) await kirim(`/ai tanya ${i}`, { nomor: `62811000010${i}`, now: at(12, i) });
+    expect(dipanggil).toEqual(["gemini", "openrouter", "gemini", "openrouter"]);
+  });
+
+  it("jawaban diberi tanda penyedia (bisa dimatikan)", async () => {
+    await siapkan(["gemini"]);
+    expect(await kirim("/ai halo")).toMatch(/jawaban gemini\n\n_via Gemini · gemini-[\w.-]+_$/);
+    await setSetting(db, "grup_ai_tanda", "0");
+    expect(await kirim("/ai halo lagi", { nomor: "628222222222" })).toBe("jawaban gemini");
+  });
+
+  it("satu penyedia gagal → langsung dicoba penyedia berikutnya dalam giliran yang sama", async () => {
+    await siapkan();
+    jawab.claude = rusak; // giliran pertama = Claude, tapi tokennya ditolak
+    const r = await kirim("/ai halo");
+    expect(r).toContain("jawaban gemini");
+    expect(dipanggil).toEqual(["claude", "gemini"]);
+  });
+
+  it("semua penyedia gagal: satu pesan maaf (tanpa detail teknis), lalu diam 10 menit", async () => {
+    await siapkan();
+    jawab.claude = rusak;
+    jawab.gemini = sibuk;
+    jawab.openrouter = sibuk;
+    const r = await kirim("/ai halo", { now: at(12, 0) });
+    expect(r).toContain("lagi sibuk atau bermasalah");
+    expect(r).not.toMatch(/token|UNAVAILABLE|demand/i);
+    expect(await kirim("/ai halo lagi", { nomor: "628222222222", now: at(12, 3) })).toBeNull();
+    expect(await kirim("/ai halo lagi", { nomor: "628333333333", now: at(12, 11) })).toContain("lagi sibuk"); // sudah > 10 menit
+  });
+
+  it("belum ada penyedia tersambung: diberi tahu sekali, AI tidak dipanggil", async () => {
+    await siapkan([]);
+    expect(await kirim("/ai halo")).toContain("belum ada penyedia AI");
+    expect(await kirim("/ai halo", { nomor: "628222222222" })).toBeNull();
+    expect(dipanggil).toEqual([]);
+  });
+});
+
+describe("batas & isolasi", () => {
+  it("per orang per menit: lebih dari batas diabaikan (diberi tahu sekali); orang lain & menit berikutnya tidak terkena", async () => {
+    await siapkan(["claude"]);
+    await setSetting(db, "grup_ai_per_orang_menit", "2");
+    expect(await kirim("/ai satu", { now: at(12, 0, 0) })).toContain("jawaban");
+    expect(await kirim("/ai dua", { now: at(12, 0, 10) })).toContain("jawaban");
+    expect(await kirim("/ai tiga", { now: at(12, 0, 20) })).toContain("Pelan-pelan ya Budi");
+    expect(await kirim("/ai empat", { now: at(12, 0, 30) })).toBeNull(); // pemberitahuan hanya sekali
+    expect(await kirim("/ai orang lain", { nomor: "628999999999", nama: "Siti", now: at(12, 0, 40) })).toContain("jawaban");
+    expect(await kirim("/ai lima", { now: at(12, 1, 30) })).toContain("jawaban"); // jendela 60 detik sudah lewat
+    expect(dipanggil).toHaveLength(4);
+  });
+
+  it("batas harian grup: diberi tahu sekali, dan jatah AI pemilik tidak terpakai", async () => {
+    await siapkan(["claude"]);
+    await setSetting(db, "grup_ai_batas_harian", "2");
+    await kirim("/ai satu", { nomor: "628111111111", now: at(12, 0) });
+    await kirim("/ai dua", { nomor: "628222222222", now: at(12, 1) });
+    expect(await kirim("/ai tiga", { nomor: "628333333333", now: at(12, 2) })).toContain("Jatah AI grup hari ini (2 pertanyaan) sudah habis");
+    expect(await kirim("/ai empat", { nomor: "628444444444", now: at(12, 3) })).toBeNull();
+    expect(dipanggil).toHaveLength(2);
+    expect(await pemakaianHariIni(db, at(13))).toBe(0); // jatah pemilik (fitur lain) tidak berkurang
+    expect(await db.aiCall.count({ where: { fitur: "chat_grup" } })).toBe(2);
+  });
+
+  it("tidak ada data DompetKos di prompt maupun instruksi; AI tidak punya aksi", async () => {
+    await siapkan(["claude"]);
+    await db.setting.upsert({ where: { kunci: "nama_pengguna" }, update: { nilai: "Abdul" }, create: { kunci: "nama_pengguna", nilai: "Abdul" } });
+    await kirim("/ai berapa saldo amplop makan gw?");
+    expect(sistem[0]).not.toMatch(/DompetKos|amplop|Rp\d|saldo:/i);
+    expect(sistem[0]).toContain("Jangan membahas aplikasi keuangan");
+    expect(prompts[0]).not.toMatch(/<DATA>|DompetKos|Abdul/);
+    expect(prompts[0]).toContain("# Pesan baru dari Budi");
+  });
+
+  it("ingatan pendek: pertanyaan berikutnya membawa percakapan sebelumnya; reset menghapusnya", async () => {
+    await siapkan(["claude"]);
+    jawab.claude = () => ok("**Paris** ibukota Prancis");
+    await kirim("/ai ibukota prancis?", { now: at(12, 0) });
+    await kirim("/ai penduduknya berapa?", { now: at(12, 1) });
+    expect(prompts[1]).toContain("# Percakapan terakhir di grup");
+    expect(prompts[1]).toContain("Budi: ibukota prancis?");
+    expect(prompts[1]).toContain("Asisten: *Paris* ibukota Prancis");
+    expect(await kirim("!aigrup reset", { nomor: OWNER, now: at(12, 2) })).toContain("dihapus");
+    await kirim("/ai halo", { now: at(12, 3) });
+    expect(prompts[2]).not.toContain("# Percakapan terakhir");
+  });
+});
+
+/** Driver WhatsApp tiruan: mencatat kiriman, termasuk tujuan & kutipan. */
+class FakeDriver implements GatewayDriver {
+  sent: { tujuan: string; text: string; kutip?: unknown }[] = [];
+  mengetikKe: string[] = [];
+  private msgH: (m: IncomingWaMessage) => void | Promise<void> = () => {};
+  onState(_: (s: GatewayState) => void) {}
+  onMessage(h: (m: IncomingWaMessage) => void | Promise<void>) {
+    this.msgH = h;
+  }
+  async start(_: WaMode) {}
+  async stop() {}
+  async logout() {}
+  hasSession() {
+    return false;
+  }
+  async sendMessage(tujuan: string, text: string, opsi?: OpsiKirim) {
+    this.sent.push({ tujuan, text, kutip: opsi?.kutip });
+  }
+  async mengetik(tujuan: string) {
+    this.mengetikKe.push(tujuan);
+  }
+  terima(m: IncomingWaMessage) {
+    return this.msgH(m);
+  }
+}
+
+describe("lewat WaManager (driver tiruan)", () => {
+  it("pesan grup dibalas ke grup (dengan kutipan) dan tidak pernah masuk ke bot DompetKos", async () => {
+    await siapkan(["claude"]);
+    const driver = new FakeDriver();
+    const mgr = new WaManager(db, driver, { log: () => {} });
+    await mgr.init();
+    const asli = { id: "PESAN-ASLI" };
+
+    await driver.terima({ nomor: "628111111111", text: "/ai halo", waktu: new Date(), grup: { jid: GRUP, nama: "Budi", disapa: false, pesan: asli } });
+    expect(driver.sent).toHaveLength(1);
+    expect(driver.sent[0]).toMatchObject({ tujuan: GRUP, kutip: asli });
+    expect(driver.sent[0].text).toContain("jawaban claude");
+    expect(driver.mengetikKe).toEqual([GRUP]);
+
+    // pemilik mengetik perintah DompetKos DI GRUP: tidak diproses sebagai catatan keuangan & tidak dijawab
+    driver.sent = [];
+    await driver.terima({ nomor: OWNER, text: "masuk 300", waktu: new Date(), grup: { jid: GRUP, nama: "Owner", disapa: false } });
+    await driver.terima({ nomor: OWNER, text: "tempe 5k", waktu: new Date(), grup: { jid: GRUP, nama: "Owner", disapa: false } });
+    expect(driver.sent).toEqual([]);
+    expect(await db.pendingAction.count()).toBe(0);
+    expect(await db.transaction.count()).toBe(0);
+
+    // grup lain tidak dijawab sama sekali
+    await driver.terima({ nomor: "628111111111", text: "/ai halo", waktu: new Date(), grup: { jid: GRUP_LAIN, nama: "Budi", disapa: false } });
+    expect(driver.sent).toEqual([]);
+  });
+
+  it("chat pribadi tetap lewat bot DompetKos seperti biasa", async () => {
+    await siapkan(["claude"]);
+    const driver = new FakeDriver();
+    const mgr = new WaManager(db, driver, { log: () => {} });
+    await mgr.init();
+    await driver.terima({ nomor: OWNER, text: "masuk 300", waktu: new Date() });
+    expect(driver.sent.length).toBeGreaterThan(0);
+    expect(driver.sent[0].tujuan).toBe(OWNER);
+    expect(await db.pendingAction.count()).toBe(1);
+  });
+});
+
+describe("peta Koneksi: jalur AI grup & giliran round robin", () => {
+  it("grup belum dipilih / mati: tidak ada penyedia bergiliran yang ditandai aktif", async () => {
+    await siapkan();
+    await setSetting(db, "grup_ai_jid", "");
+    const k = await dataKoneksi(db, at(12));
+    expect(k.grup).toMatchObject({ dipilih: false, aktif: false, hariIni: 0 });
+    await setSetting(db, "grup_ai_jid", GRUP);
+    await setSetting(db, "grup_ai_aktif", "0");
+    expect((await dataKoneksi(db, at(12))).grup).toMatchObject({ dipilih: true, aktif: false });
+  });
+
+  it("roda berisi penyedia yang tersambung; 'berikut' maju tiap jawaban; jumlah per penyedia dihitung", async () => {
+    await siapkan();
+    let k = await dataKoneksi(db, at(12));
+    expect(k.grup).toMatchObject({ dipilih: true, aktif: true, roda: ["claude", "gemini", "openrouter"], berikut: "claude", hariIni: 0 });
+
+    await kirim("/ai satu", { nomor: "628111111101", now: at(12, 1) }); // Claude
+    k = await dataKoneksi(db, at(12, 2));
+    expect(k.grup.berikut).toBe("gemini");
+    await kirim("/ai dua", { nomor: "628111111102", now: at(12, 2) }); // Gemini
+    await kirim("/ai tiga", { nomor: "628111111103", now: at(12, 3) }); // OpenRouter
+    await kirim("/ai empat", { nomor: "628111111104", now: at(12, 4) }); // Claude lagi
+    k = await dataKoneksi(db, at(12, 5));
+    expect(k.grup).toMatchObject({ berikut: "gemini", hariIni: 4, per: { claude: 2, gemini: 1, openrouter: 1 } });
+    // jawaban grup tidak dihitung ke fitur-fitur DompetKos di peta
+    expect(k.fitur.every((f) => f.kode !== ("chat_grup" as string))).toBe(true);
+  });
+
+  it("penyedia yang belum tersambung tidak ikut roda", async () => {
+    await siapkan(["gemini", "openrouter"]);
+    const k = await dataKoneksi(db, at(12));
+    expect(k.grup.roda).toEqual(["gemini", "openrouter"]);
+    expect(k.grup.berikut).toBe("gemini");
+  });
+});
+
+describe("ala Meta AI: bantuan, pesan yang dibalas, dan foto", () => {
+  const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+  const JPG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64)]);
+  const lengkap = (text: string, o: { nomor?: string; gambar?: () => Promise<Buffer>; kutipan?: { teks: string; dariBot: boolean; gambar?: () => Promise<Buffer> }; now?: Date } = {}) =>
+    prosesPesanGrup(db, { nomor: o.nomor ?? "628111111111", text, waktu: o.now ?? at(12), gambar: o.gambar, grup: { jid: GRUP, nama: "Budi", disapa: false, kutipan: o.kutipan } }, o.now ?? at(12));
+
+  it("/ai bantuan: daftar kemampuan & batas, tanpa memanggil AI dan tanpa memakai jatah", async () => {
+    await siapkan(["claude"]);
+    for (let i = 0; i < 6; i++) expect(await kirim(i % 2 ? "/ai bantuan" : "/ai help")).toBe(BANTUAN); // lewat batas 3/menit pun tetap dijawab
+    expect(BANTUAN).toContain("Balas pesan");
+    expect(BANTUAN).toContain("Kirim foto");
+    expect(BANTUAN).toMatch(/Belum bisa:.*internet.*gambar/);
+    expect(dipanggil).toEqual([]);
+    expect(await db.aiCall.count()).toBe(0);
+  });
+
+  it("persona: jujur soal batas (tanpa internet, tanpa bikin gambar), bisa baca foto & pesan yang dibalas", () => {
+    expect(SYSTEM_GRUP).toContain("TIDAK bisa membuka internet");
+    expect(SYSTEM_GRUP).toContain("TIDAK bisa membuat gambar");
+    expect(SYSTEM_GRUP).toContain("Pesan yang dibalas");
+    expect(SYSTEM_GRUP).not.toMatch(/DompetKos/i);
+  });
+
+  it("membalas pesan lalu /ai: pesan yang dibalas ikut ke prompt; /ai saja menanggapi pesan itu", async () => {
+    await siapkan(["claude"]);
+    await lengkap("/ai terjemahkan ke Inggris", { kutipan: { teks: "Selamat pagi, semoga harimu menyenangkan", dariBot: false } });
+    expect(prompts[0]).toContain("# Pesan yang dibalas (dari anggota grup)");
+    expect(prompts[0]).toContain("Selamat pagi, semoga harimu menyenangkan");
+    expect(prompts[0]).toMatch(/# Pesan baru dari Budi\nterjemahkan ke Inggris/);
+
+    await lengkap("/ai", { nomor: "628222222222", kutipan: { teks: "Apa itu blockchain?", dariBot: true } });
+    expect(prompts[1]).toContain("# Pesan yang dibalas (dari asisten)");
+    expect(prompts[1]).toContain("Tanggapi atau jelaskan pesan yang dibalas ini.");
+    // tanpa pesan yang dibalas: bagian itu tidak ada
+    await lengkap("/ai halo", { nomor: "628333333333" });
+    expect(prompts[2]).not.toContain("# Pesan yang dibalas");
+  });
+
+  it("foto + /ai: file gambar dikirim ke penyedia (ada saat dipanggil), prompt menyebut file, dan dihapus sesudahnya", async () => {
+    await siapkan(["claude"]);
+    const r = await lengkap("/ai ini tanaman apa?", { gambar: async () => PNG });
+    expect(r).toContain("jawaban claude");
+    expect(gambarAda).toEqual([true]);
+    expect(jalurGambar[0]).toMatch(/foto\.png$/);
+    expect(prompts[0]).toContain("Gambar terlampir: ./foto.png");
+    expect(prompts[0]).toContain("ini tanaman apa?");
+    expect(fs.existsSync(jalurGambar[0]!)).toBe(false); // sudah dibersihkan
+    expect(fs.existsSync(jalurGambar[0]!.replace(/\/foto\.png$/, ""))).toBe(false);
+    expect((await db.aiChat.findMany({ where: { peran: "user" } }))[0].isi).toContain("[mengirim foto]");
+  });
+
+  it("membalas sebuah foto dengan /ai (tanpa teks): foto yang dibalas dibaca; foto sendiri didahulukan kalau dua-duanya ada", async () => {
+    await siapkan(["claude"]);
+    await lengkap("/ai", { kutipan: { teks: "", dariBot: false, gambar: async () => JPG } });
+    expect(jalurGambar[0]).toMatch(/foto\.jpg$/);
+    expect(prompts[0]).toContain("Jelaskan apa yang ada di gambar ini.");
+
+    await lengkap("/ai bandingkan", { nomor: "628222222222", gambar: async () => PNG, kutipan: { teks: "", dariBot: false, gambar: async () => JPG } });
+    expect(jalurGambar[1]).toMatch(/foto\.png$/);
+  });
+
+  it("foto: OpenRouter dengan model terpasang (bisa teks saja) tidak ikut bergiliran; Claude/Gemini bergantian", async () => {
+    await siapkan(); // OpenRouter terpasang dengan model pilihan
+    for (let i = 0; i < 4; i++) await lengkap(`/ai foto ${i}`, { nomor: `62811000020${i}`, now: at(12, i), gambar: async () => PNG });
+    expect(dipanggil).toEqual(["claude", "gemini", "claude", "gemini"]);
+    expect(dipanggil).not.toContain("openrouter");
+  });
+
+  it("foto: kalau hanya OpenRouter bermodel terpasang yang tersambung, diberi tahu (tanpa memanggil AI)", async () => {
+    await siapkan(["openrouter"]);
+    expect(await lengkap("/ai ini apa?", { gambar: async () => PNG })).toContain("Belum ada penyedia yang bisa membaca foto");
+    expect(dipanggil).toEqual([]);
+  });
+
+  it("foto rusak / bukan gambar / gagal diunduh: pesan ramah, AI tidak dipanggil, tidak ada file tertinggal", async () => {
+    await siapkan(["claude"]);
+    expect(await lengkap("/ai apa ini?", { gambar: async () => Buffer.from("bukan gambar sama sekali, hanya teks biasa") })).toContain("nggak bisa kubaca");
+    expect(await lengkap("/ai apa ini?", { nomor: "628222222222", gambar: async () => { throw new Error("jaringan putus"); } })).toContain("gagal diunduh");
+    expect(await lengkap("/ai apa ini?", { nomor: "628333333333", gambar: async () => Buffer.alloc(9 * 1024 * 1024, 0xff) })).toContain("nggak bisa kubaca"); // > 8 MB
+    expect(dipanggil).toEqual([]);
+  });
+
+  it("file foto dihapus juga kalau semua penyedia gagal", async () => {
+    await siapkan(["claude"]);
+    jawab.claude = rusak;
+    const r = await lengkap("/ai apa ini?", { gambar: async () => PNG });
+    expect(r).toContain("lagi sibuk atau bermasalah");
+    expect(fs.existsSync(jalurGambar[0]!)).toBe(false);
+  });
+});
+
+describe("tanpa batas pertanyaan (bawaan)", () => {
+  it("satu orang bisa bertanya berkali-kali dalam semenit tanpa dibatasi", async () => {
+    await siapkan(["claude"]);
+    for (let i = 0; i < 12; i++) {
+      const r = await kirim(`/ai pertanyaan ke-${i}`, { now: at(12, 0, i) }); // 12 pertanyaan dalam 12 detik, orang yang sama
+      expect(r, `ke-${i}`).toContain("jawaban claude");
+    }
+    expect(dipanggil).toHaveLength(12);
+  });
+
+  it("tidak ada batas harian: tetap dijawab walau sudah ratusan jawaban hari ini", async () => {
+    await siapkan(["claude"]);
+    await db.aiCall.createMany({ data: Array.from({ length: 400 }, (_, i) => ({ waktu: at(11, 0, i), fitur: "chat_grup", penyedia: "claude", utama: true, model: "sonnet", status: "ok" })) });
+    expect(await kirim("/ai masih bisa?", { now: at(12) })).toContain("jawaban claude");
+    expect(await kirim("!aigrup status", { nomor: OWNER, now: at(12, 1) })).toContain("tanpa batas");
+  });
+
+  it("batas tetap bisa dipasang kalau diinginkan (angka > 0), dan 0 mematikannya lagi", async () => {
+    await siapkan(["claude"]);
+    await setSetting(db, "grup_ai_per_orang_menit", "1");
+    expect(await kirim("/ai satu", { now: at(12, 0, 0) })).toContain("jawaban");
+    expect(await kirim("/ai dua", { now: at(12, 0, 5) })).toContain("Pelan-pelan");
+    await setSetting(db, "grup_ai_per_orang_menit", "0");
+    expect(await kirim("/ai tiga", { now: at(12, 0, 10) })).toContain("jawaban");
+  });
+});
+
+describe("identitas: Fable 5", () => {
+  it("pertanyaan identitas dijawab langsung 'Fable 5' tanpa memanggil AI dan tanpa memakai jatah", async () => {
+    await siapkan(["claude", "gemini"]);
+    await setSetting(db, "grup_ai_per_orang_menit", "1"); // jatah ketat pun tidak terpakai oleh pertanyaan identitas
+    for (const t of ["ai apa?", "AI apa ini", "model apa", "model apa ini?", "kamu ai apa", "kamu siapa", "siapa kamu?", "siapa namamu", "nama kamu siapa", "bot apa sih", "pakai model apa", "kamu pake model apa ya", "ai ini apa", "who are you", "which AI are you"]) {
+      const r = await kirim(`/ai ${t}`);
+      expect(r, t).toBe(IDENTITAS);
+    }
+    expect(IDENTITAS).toContain("Fable 5");
+    expect(dipanggil).toEqual([]);
+    expect(await db.aiCall.count()).toBe(0);
+  });
+
+  it("hanya pertanyaan identitas yang tertangkap; pertanyaan sungguhan tetap ke AI", async () => {
+    expect(pertanyaanIdentitas("ai apa yang paling bagus untuk belajar coding?")).toBe(false);
+    expect(pertanyaanIdentitas("model apa yang cocok buat mobil listrik")).toBe(false);
+    expect(pertanyaanIdentitas("siapa presiden pertama indonesia")).toBe(false);
+    expect(pertanyaanIdentitas("apa itu ai")).toBe(false);
+    await siapkan(["claude"]);
+    expect(await kirim("/ai siapa presiden pertama indonesia?")).toContain("jawaban claude");
+    expect(dipanggil).toEqual(["claude"]);
+  });
+
+  it("instruksi sistem: nama Fable 5, tidak mengaku manusia, jujur kalau ditanya lebih dalam", () => {
+    expect(SYSTEM_GRUP).toContain("*Fable 5*");
+    expect(SYSTEM_GRUP).toContain("Jangan pernah mengaku manusia");
+    expect(SYSTEM_GRUP).toMatch(/jangan mengarang.*bergiliran oleh beberapa penyedia AI/s);
+  });
+
+  it("mengirim foto dengan 'ai apa?' bukan pertanyaan identitas (itu tentang fotonya)", async () => {
+    await siapkan(["claude"]);
+    const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+    const r = await prosesPesanGrup(db, { nomor: "628111111111", text: "/ai ini apa?", waktu: at(12), gambar: async () => PNG, grup: { jid: GRUP, nama: "Budi", disapa: false } }, at(12));
+    expect(r).toContain("jawaban claude");
+  });
+});

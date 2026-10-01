@@ -33,6 +33,20 @@ export const DEFAULT_SETTINGS = {
   ai_gemini_model_ringan: "gemini-3.5-flash-lite",
   /** pindah ke model lain otomatis kalau model yang dipilih penuh / timeout / ditutup (Gemini & OpenRouter) */
   ai_gemini_auto: "1",
+  // ---- AI grup WhatsApp: asisten umum (tanpa data DompetKos) untuk SATU grup, penyedia bergiliran
+  /** JID grup yang dilayani (…@g.us); diisi lewat perintah `!aigrup aktif` di grup oleh pemilik, atau di website */
+  grup_ai_jid: "",
+  grup_ai_aktif: "0",
+  /** perintah = hanya pesan berawalan /ai (atau bot di-mention / pesan bot dibalas); pertanyaan = ditambah pesan berbentuk pertanyaan; semua = setiap pesan teks */
+  grup_ai_mode: "perintah",
+  /** batas jawaban AI grup per hari; 0 = tanpa batas (bawaan). Batas dari penyedia (kuota gratis, langganan) tetap berlaku */
+  grup_ai_batas_harian: "0",
+  /** maks pertanyaan per orang per menit; 0 = tanpa batas (bawaan) */
+  grup_ai_per_orang_menit: "0",
+  /** cetak nama penyedia & model di bawah jawaban */
+  grup_ai_tanda: "1",
+  /** hitungan internal untuk giliran penyedia (round robin) */
+  grup_ai_putaran: "0",
   ai_openrouter_auto: "1",
   ai_openrouter_aktif: "0",
   /** wajib model gratis (berakhiran ":free"); kosong = pilih otomatis model gratis pertama */

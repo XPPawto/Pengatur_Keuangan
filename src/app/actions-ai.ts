@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireLogin } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { AKTOR_WEB } from "@/lib/services/activity-log";
-import { setSetting } from "@/lib/services/settings";
+import { getSetting, setSetting } from "@/lib/services/settings";
 import { hapusRiwayat, ingat, jalankanAksiAI, lupakan, tanyaAsisten, validasiAksi, type AksiAI } from "@/lib/ai/asisten";
 import { CADANGAN, LABEL_KONDISI, LABEL_PENYEDIA, labelKondisiCadangan, simpanKunciCadangan, simpanTokenAI, tesKoneksiAI, type KondisiAI, type Penyedia, type PenyediaCadangan } from "@/lib/ai/panggil";
 import { modelGratis } from "@/lib/ai/openrouter";
@@ -165,6 +165,41 @@ export async function tesCadanganAction(_: FormState, form: FormData): Promise<F
   revalidatePath("/", "layout");
   if (h.ok) return { ok: `Tersambung ke ${LABEL_PENYEDIA[p]} (${(h.durasiMs / 1000).toFixed(1)} detik).` };
   return { error: `${labelKondisiCadangan(h.alasan as KondisiAI)}: ${h.pesan}` };
+}
+
+const MODE_GRUP = ["perintah", "pertanyaan", "semua"];
+
+/** Pengaturan AI grup WhatsApp dari website (divalidasi ketat: input datang dari browser). */
+export async function simpanGrupAIAction(_: FormState, form: FormData): Promise<FormState> {
+  await requireLogin();
+  const jid = String(form.get("grup_ai_jid") ?? "").trim();
+  const mode = String(form.get("grup_ai_mode") ?? "perintah");
+  const batas = Math.round(Number(form.get("grup_ai_batas_harian")));
+  const perOrang = Math.round(Number(form.get("grup_ai_per_orang_menit")));
+  if (jid && !/^[\d-]{5,40}@g\.us$/.test(jid)) return { error: "ID grup tidak valid (bentuknya 1203630…@g.us). Paling mudah: ketik !aigrup aktif di grupnya." };
+  if (!MODE_GRUP.includes(mode)) return { error: "Mode tidak dikenal." };
+  if (!(batas >= 0 && batas <= 100000)) return { error: "Batas harian harus 0–100000 (0 = tanpa batas)." };
+  if (!(perOrang >= 0 && perOrang <= 60)) return { error: "Batas per orang per menit harus 0–60 (0 = tanpa batas)." };
+  const aktif = form.get("grup_ai_aktif") === "on";
+  if (aktif && !jid) return { error: "Pilih grupnya dulu (ketik !aigrup aktif di grup, atau isi ID grup)." };
+  await setSetting(prisma, "grup_ai_jid", jid);
+  await setSetting(prisma, "grup_ai_aktif", aktif ? "1" : "0");
+  await setSetting(prisma, "grup_ai_mode", mode);
+  await setSetting(prisma, "grup_ai_batas_harian", String(batas));
+  await setSetting(prisma, "grup_ai_per_orang_menit", String(perOrang));
+  await setSetting(prisma, "grup_ai_tanda", form.get("grup_ai_tanda") === "on" ? "1" : "0");
+  revalidatePath("/koneksi");
+  return { ok: "Pengaturan AI grup disimpan." };
+}
+
+/** Lepas grup: bot berhenti menjawab di grup itu dan percakapannya dilupakan. */
+export async function lepasGrupAIAction() {
+  await requireLogin();
+  const jid = await getSetting(prisma, "grup_ai_jid");
+  await setSetting(prisma, "grup_ai_jid", "");
+  await setSetting(prisma, "grup_ai_aktif", "0");
+  if (jid) await prisma.aiChat.deleteMany({ where: { kanal: `grup:${jid}` } });
+  revalidatePath("/koneksi");
 }
 
 /** Hapus statistik model & daftar model yang ditandai menolak (mulai belajar dari nol). */

@@ -9,11 +9,36 @@ export interface IncomingWaMessage {
   waktu: Date;
   /** ada kalau pesannya gambar (mis. foto struk); dipanggil hanya saat dibutuhkan */
   gambar?: () => Promise<Buffer>;
+  /** terisi kalau pesan datang dari grup (bukan chat pribadi). `nomor` = pengirim di grup itu */
+  grup?: {
+    /** JID grup (…@g.us); dipakai sebagai tujuan balasan */
+    jid: string;
+    /** nama tampilan pengirim (push name) */
+    nama?: string;
+    /** bot di-mention, atau pesan ini membalas pesan bot */
+    disapa: boolean;
+    /** pesan asli (buram), untuk membalas dengan kutipan */
+    pesan?: unknown;
+    /** pesan yang dibalas pengirim (kalau pesan ini membalas sesuatu) */
+    kutipan?: {
+      teks: string;
+      /** yang dibalas adalah pesan bot sendiri */
+      dariBot: boolean;
+      /** ada kalau yang dibalas berisi gambar; dipanggil hanya saat dibutuhkan */
+      gambar?: () => Promise<Buffer>;
+    };
+  };
+}
+
+export interface OpsiKirim {
+  /** pesan asli yang dikutip (nilai `grup.pesan`) */
+  kutip?: unknown;
 }
 
 export interface WhatsAppGateway {
-  sendMessage(nomor: string, text: string): Promise<void>;
-  /** tampilkan "sedang mengetik…" (opsional; dipakai saat asisten AI berpikir) */
+  /** `nomor` bisa nomor telepon, atau JID lengkap (mis. grup …@g.us) */
+  sendMessage(nomor: string, text: string, opsi?: OpsiKirim): Promise<void>;
+  /** tampilkan "sedang mengetik…" (opsional; dipakai saat asisten AI berpikir); nomor atau JID */
   mengetik?(nomor: string): Promise<void>;
   onMessage(handler: (m: IncomingWaMessage) => void | Promise<void>): void;
 }

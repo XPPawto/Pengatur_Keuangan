@@ -191,8 +191,23 @@ body {
   stroke-dasharray: 7 5;
   animation: alir 1.1s linear infinite;
 }
+/* jalur AI grup (round robin): manik-manik; penyedia giliran berikutnya mengalir */
+.garis-giliran,
+.garis-giliran-alir {
+  stroke-dasharray: 0.1 7;
+  stroke-linecap: round;
+}
+.garis-giliran-alir {
+  animation: alir-titik 0.9s linear infinite;
+}
+@keyframes alir-titik {
+  to {
+    stroke-dashoffset: -7.1;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .garis-alir {
+  .garis-alir,
+  .garis-giliran-alir {
     animation: none;
   }
 }

@@ -16,11 +16,12 @@ export const LABEL_PENYEDIA: Record<Penyedia, string> = { claude: "Claude", gemi
 /** Hasil panggilan beserta penyedia yang akhirnya menjawab. */
 export type HasilAI = HasilClaude & { penyedia?: Penyedia; /** model yang benar-benar dipakai */ model?: string };
 
-export type FiturAI = "chat_web" | "chat_wa" | "struk" | "kategori" | "review" | "cek";
+export type FiturAI = "chat_web" | "chat_wa" | "chat_grup" | "struk" | "kategori" | "review" | "cek";
 
 export const LABEL_FITUR: Record<FiturAI, string> = {
   chat_web: "Chat website",
   chat_wa: "Asisten WhatsApp",
+  chat_grup: "AI grup WhatsApp",
   struk: "Baca foto",
   kategori: "Tebak kategori",
   review: "Review Sabtu",
@@ -242,7 +243,8 @@ export async function statusAI(db: Db, now: Date) {
 /** Panggilan yang benar-benar dicoba hari ini (WIB). */
 export async function pemakaianHariIni(db: Db, now: Date): Promise<number> {
   // satu permintaan = satu, walau dicoba ke beberapa penyedia
-  return db.aiCall.count({ where: { waktu: { gte: fromWib(wibDate(now)) }, fitur: { not: "cek" }, utama: true } });
+  // AI grup punya batas harian sendiri (grup_ai_batas_harian) supaya ramainya grup tidak menghabiskan jatah pemilik
+  return db.aiCall.count({ where: { waktu: { gte: fromWib(wibDate(now)) }, fitur: { notIn: ["cek", "chat_grup"] }, utama: true } });
 }
 
 // ---------------------------------------------------------------- panggil
@@ -292,7 +294,7 @@ export async function urutanPenyedia(db: Db): Promise<Penyedia[]> {
  */
 export async function panggilAI(db: Db, r: PermintaanAI): Promise<HasilAI> {
   if ((await getSetting(db, "ai_aktif")) !== "1") return gagal("dimatikan", "Asisten AI dimatikan di Pengaturan.");
-  if (r.fitur !== "cek") {
+  if (r.fitur !== "cek" && r.fitur !== "chat_grup") {
     const batas = await getSettingNumber(db, "ai_batas_harian");
     if ((await pemakaianHariIni(db, r.now)) >= batas) return gagal("kuota", `Batas ${batas} pemakaian AI hari ini udah habis.`);
   }
