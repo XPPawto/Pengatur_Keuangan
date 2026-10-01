@@ -14,6 +14,7 @@ export default function GrupAIPanel({
   batas,
   perOrang,
   tanda,
+  modelClaude,
   pakaiHariIni,
   penyedia,
 }: {
@@ -23,6 +24,8 @@ export default function GrupAIPanel({
   batas: number;
   perOrang: number;
   tanda: boolean;
+  /** otomatis | haiku | sonnet | opus | bawaan */
+  modelClaude: string;
   pakaiHariIni: number;
   /** nama penyedia yang tersambung, urut giliran */
   penyedia: string[];
@@ -69,6 +72,19 @@ export default function GrupAIPanel({
               <option value="pertanyaan">/ai + pesan berbentuk pertanyaan</option>
               <option value="semua">Semua pesan teks (ramai & boros kuota)</option>
             </select>
+          </div>
+          <div>
+            <label htmlFor="grup_ai_model_claude" className="label">
+              Model Claude (saat giliran Claude)
+            </label>
+            <select id="grup_ai_model_claude" name="grup_ai_model_claude" defaultValue={modelClaude} className="input">
+              <option value="otomatis">Otomatis: Haiku ringan · Sonnet kuliah/koding · Opus sangat berat</option>
+              <option value="haiku">Selalu Haiku (cepat & hemat)</option>
+              <option value="sonnet">Selalu Sonnet (seimbang)</option>
+              <option value="opus">Selalu Opus (paling pintar, paling boros kuota)</option>
+              <option value="bawaan">Ikuti model di halaman Asisten</option>
+            </select>
+            <p className="hint">Opus otomatis turun ke Sonnet kalau kuota langganan Claude (sesi 5 jam ≥ 70% / mingguan ≥ 85%) sudah tinggi.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>

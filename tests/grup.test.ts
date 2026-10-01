@@ -3,11 +3,11 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HasilClaude } from "@/lib/ai/claude";
 import { aturDaftarGemini } from "@/lib/ai/gemini";
-import { adalahPertanyaan, BANTUAN, bersihkanBalasan, IDENTITAS, pertanyaanIdentitas, prosesPesanGrup, resetKeadaanGrup, SYSTEM_GRUP, urutanGiliran } from "@/lib/ai/grup";
+import { adalahPertanyaan, BANTUAN, bersihkanBalasan, IDENTITAS, pertanyaanIdentitas, prosesPesanGrup, resetKeadaanGrup, SYSTEM_GRUP, tingkatSoal, urutanGiliran } from "@/lib/ai/grup";
 import { aturDaftarModel } from "@/lib/ai/openrouter";
 import { pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI } from "@/lib/ai/panggil";
 import { dataKoneksi } from "@/lib/services/koneksi";
-import { setSetting } from "@/lib/services/settings";
+import { getSetting, setSetting } from "@/lib/services/settings";
 import { fromWib } from "@/lib/time";
 import type { GatewayDriver, GatewayState, IncomingWaMessage, OpsiKirim, WaMode } from "@/lib/whatsapp/gateway";
 import { WaManager } from "@/lib/whatsapp/manager";
@@ -30,6 +30,8 @@ let sistem: string[] = [];
 /** jalur file gambar yang diterima tiap panggilan penyedia (null = tanpa gambar) dan apakah filenya ada saat dipanggil */
 let jalurGambar: (string | null)[] = [];
 let gambarAda: (boolean | null)[] = [];
+/** model yang diterima tiap penyedia: "claude:haiku", "gemini:gemini-3.6-flash", … */
+let modelDipakai: string[] = [];
 let jawab: Record<"claude" | "gemini" | "openrouter", () => HasilClaude>;
 let pulih: (() => void)[] = [];
 
@@ -43,12 +45,13 @@ beforeEach(async () => {
   sistem = [];
   jalurGambar = [];
   gambarAda = [];
+  modelDipakai = [];
   jawab = { claude: () => ok("jawaban claude"), gemini: () => ok("jawaban gemini"), openrouter: () => ok("jawaban openrouter") };
   pulih = [
-    setPenjalanAI(async (p) => (dipanggil.push("claude"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), jawab.claude())),
+    setPenjalanAI(async (p) => (dipanggil.push("claude"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), modelDipakai.push(`claude:${p.model}`), jawab.claude())),
     setPenjalanCadangan({
-      gemini: async (p) => (dipanggil.push("gemini"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), jawab.gemini()),
-      openrouter: async (p) => (dipanggil.push("openrouter"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), jawab.openrouter()),
+      gemini: async (p) => (dipanggil.push("gemini"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), modelDipakai.push(`gemini:${p.model}`), jawab.gemini()),
+      openrouter: async (p) => (dipanggil.push("openrouter"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), modelDipakai.push(`openrouter:${p.model}`), jawab.openrouter()),
     }),
   ];
 });
@@ -531,5 +534,54 @@ describe("identitas: Fable 5", () => {
     const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
     const r = await prosesPesanGrup(db, { nomor: "628111111111", text: "/ai ini apa?", waktu: at(12), gambar: async () => PNG, grup: { jid: GRUP, nama: "Budi", disapa: false } }, at(12));
     expect(r).toContain("jawaban claude");
+  });
+});
+
+describe("model Claude sesuai beratnya soal (Haiku / Sonnet / Opus)", () => {
+  it("tingkatSoal: ringan, berat (kuliah/koding/foto), sangat berat", () => {
+    for (const t of ["halo apa kabar?", "rekomendasi tempat makan enak di bandung", "kapan hari kemerdekaan indonesia?", "artinya serendipity apa?"]) expect(tingkatSoal(t), t).toBe("ringan");
+    for (const t of ["jelaskan integral parsial beserta contohnya", "kenapa kode python saya error TypeError: unsupported operand", "tolong kerjakan soal statistik ini", "bantu bikin makalah tentang ekonomi digital", "const x = () => 1; kenapa error?"]) expect(tingkatSoal(t), t).toBe("berat");
+    expect(tingkatSoal("ini apa?", { gambar: true })).toBe("berat");
+    for (const t of ["buktikan teorema pythagoras secara formal", "rancang arsitektur sistem untuk aplikasi ojek online", "analisis mendalam dampak AI ke pasar kerja"]) expect(tingkatSoal(t), t).toBe("sangat_berat");
+    expect(tingkatSoal("a ".repeat(700))).toBe("sangat_berat"); // teks sangat panjang
+    expect(tingkatSoal("perbaiki kode ini", { kutipan: `function hitung(x) {\n${"  return x * 2;\n".repeat(50)}}` })).toBe("sangat_berat"); // kode panjang di pesan yang dibalas
+  });
+
+  it("giliran Claude memakai haiku / sonnet / opus sesuai soal, dan modelnya tertera di bawah jawaban", async () => {
+    await siapkan(["claude"]);
+    const a = await kirim("/ai halo apa kabar?", { nomor: "628111111101" });
+    await kirim("/ai jelaskan integral parsial", { nomor: "628111111102" });
+    await kirim("/ai buktikan teorema pythagoras secara formal", { nomor: "628111111103" });
+    expect(modelDipakai).toEqual(["claude:haiku", "claude:sonnet", "claude:opus"]);
+    expect(a).toContain("_via Claude · haiku_");
+  });
+
+  it("Opus turun ke Sonnet kalau kuota langganan Claude sudah tinggi", async () => {
+    await siapkan(["claude"]);
+    const reset = Math.round(at(17).getTime() / 1000);
+    await db.setting.upsert({
+      where: { kunci: "ai_batas_claude" },
+      update: { nilai: JSON.stringify({ jendela: { five_hour: { persen: 75, resetsAt: reset, diperbarui: at(11).toISOString() } }, status: "allowed" }) },
+      create: { kunci: "ai_batas_claude", nilai: JSON.stringify({ jendela: { five_hour: { persen: 75, resetsAt: reset, diperbarui: at(11).toISOString() } }, status: "allowed" }) },
+    });
+    await kirim("/ai buktikan teorema pythagoras secara formal");
+    expect(modelDipakai).toEqual(["claude:sonnet"]);
+  });
+
+  it("pilihan tetap di pengaturan: selalu Sonnet, atau ikuti model halaman Asisten", async () => {
+    await siapkan(["claude"]);
+    await setSetting(db, "grup_ai_model_claude", "sonnet");
+    await kirim("/ai halo", { nomor: "628111111101" });
+    await setSetting(db, "grup_ai_model_claude", "bawaan");
+    await kirim("/ai halo lagi", { nomor: "628111111102" });
+    expect(modelDipakai).toEqual(["claude:sonnet", `claude:${await getSetting(db, "ai_model")}`]);
+    expect(await kirim("!aigrup status", { nomor: OWNER })).toContain("Model Claude: bawaan");
+  });
+
+  it("Gemini/OpenRouter tidak dipaksa memakai nama model Claude", async () => {
+    await siapkan(["gemini"]);
+    await kirim("/ai buktikan teorema pythagoras secara formal");
+    expect(modelDipakai).toHaveLength(1);
+    expect(modelDipakai[0]).toMatch(/^gemini:gemini-/);
   });
 });
