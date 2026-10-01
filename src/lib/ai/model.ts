@@ -30,3 +30,16 @@ export function denganAktif(daftar: OpsiModel[], aktif: string): OpsiModel[] {
   if (!aktif || daftar.some((m) => m.v === aktif)) return daftar;
   return [{ v: aktif, l: aktif }, ...daftar];
 }
+
+/** Satu baris "kesehatan model" (statistik belajar otomatis) untuk panel Koneksi. Status dihitung di server. */
+export interface BarisStatModel {
+  penyedia: string;
+  model: string;
+  ok: number;
+  gagal: number;
+  /** rata-rata lama jawab model yang sukses (ms); 0 = belum ada */
+  ms: number;
+  status: "sehat" | "sempat_gagal" | "ditahan" | "ditutup";
+  /** kapan model boleh dicoba lagi (sudah diformat WIB); null kalau tidak ditahan */
+  bolehLagi: string | null;
+}

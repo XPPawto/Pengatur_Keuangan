@@ -3,7 +3,8 @@ import ConfirmButton from "./ConfirmButton";
 import { Icon } from "./icons";
 import { Badge } from "./ui";
 import { LogoPenyedia } from "./LogoAI";
-import { hapusKunciCadanganAction, simpanCadanganAction, simpanKunciCadanganAction, tesCadanganAction } from "@/app/actions-ai";
+import type { BarisStatModel } from "@/lib/ai/model";
+import { hapusKunciCadanganAction, resetStatistikModelAction, simpanCadanganAction, simpanKunciCadanganAction, tesCadanganAction } from "@/app/actions-ai";
 import type { statusCadangan } from "@/lib/ai/panggil";
 import type { ModelGratis } from "@/lib/ai/openrouter";
 
@@ -29,6 +30,8 @@ export default function CadanganPanel({
   modelGratis,
   autoGemini,
   autoOpenRouter,
+  statModel,
+  geminiDitemukan,
 }: {
   cadangan: Cadangan[];
   claudeAktif: boolean;
@@ -39,6 +42,10 @@ export default function CadanganPanel({
   /** pindah ke model lain otomatis kalau modelnya penuh / timeout / ditutup */
   autoGemini: boolean;
   autoOpenRouter: boolean;
+  /** statistik belajar otomatis per model */
+  statModel: BarisStatModel[];
+  /** model Gemini yang ditemukan dari Google untuk key ini; null = belum dimuat / tidak bisa diambil */
+  geminiDitemukan: string[] | null;
   modelGratis: ModelGratis[] | null;
 }) {
   const g = cadangan.find((c) => c.penyedia === "gemini")!;
@@ -110,7 +117,7 @@ export default function CadanganPanel({
                 Model Gemini
               </label>
               <select id="ai_gemini_model" name="ai_gemini_model" defaultValue={modelGemini} className="input">
-                {[...new Set([modelGemini, ...MODEL_GEMINI])].map((m) => (
+                {[...new Set([modelGemini, ...MODEL_GEMINI, ...(geminiDitemukan ?? [])])].map((m) => (
                   <option key={m}>{m}</option>
                 ))}
               </select>
@@ -120,7 +127,7 @@ export default function CadanganPanel({
                 Gemini tugas kecil
               </label>
               <select id="ai_gemini_model_ringan" name="ai_gemini_model_ringan" defaultValue={modelGeminiRingan} className="input">
-                {[...new Set([modelGeminiRingan, ...MODEL_GEMINI])].map((m) => (
+                {[...new Set([modelGeminiRingan, ...MODEL_GEMINI, ...(geminiDitemukan ?? [])])].map((m) => (
                   <option key={m}>{m}</option>
                 ))}
               </select>
@@ -143,6 +150,64 @@ export default function CadanganPanel({
             </div>
           </div>
         </ActionForm>
+
+        <div className="mt-4 space-y-2 border-t border-line pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="flex items-center gap-2 text-sm font-semibold">
+              <Icon name="pulse" size={16} className="text-muted" />
+              Kesehatan model (belajar otomatis)
+            </h4>
+            {statModel.length > 0 && (
+              <ActionForm action={resetStatistikModelAction} submit="Reset statistik" submitClass="btn-ghost btn-sm">
+                <></>
+              </ActionForm>
+            )}
+          </div>
+          {statModel.length === 0 ? (
+            <p className="hint">Belum ada data. Terisi sendiri setelah Gemini / OpenRouter dipakai: bot mencatat model mana yang cepat dan mana yang sering penuh, lalu mendahulukan yang paling andal.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wide text-muted">
+                    <th className="py-1.5 pr-3 font-medium">Model</th>
+                    <th className="py-1.5 pr-3 font-medium">Kondisi</th>
+                    <th className="py-1.5 pr-3 text-right font-medium">Sukses / gagal</th>
+                    <th className="py-1.5 text-right font-medium">Rata-rata</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {statModel.map((m) => (
+                    <tr key={`${m.penyedia}|${m.model}`} className="border-t border-line">
+                      <td className="py-1.5 pr-3">
+                        <span className="flex items-center gap-1.5">
+                          <LogoPenyedia penyedia={m.penyedia === "gemini" ? "gemini" : "openrouter"} size={14} />
+                          <span className="break-all">{m.model}</span>
+                        </span>
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        {m.status === "sehat" && <Badge tone="ok">Sehat</Badge>}
+                        {m.status === "sempat_gagal" && <Badge tone="neutral">Sempat gagal, dicoba lagi</Badge>}
+                        {m.status === "ditahan" && <Badge tone="warn">Penuh, ditahan sampai {m.bolehLagi}</Badge>}
+                        {m.status === "ditutup" && <Badge tone="warn">Tidak tersedia, dicoba lagi {m.bolehLagi}</Badge>}
+                      </td>
+                      <td className="num py-1.5 pr-3 text-right">
+                        {m.ok} / {m.gagal}
+                      </td>
+                      <td className="num py-1.5 text-right">{m.ms ? `${(m.ms / 1000).toFixed(1)} dtk` : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="hint">
+            {geminiDitemukan
+              ? `Model Gemini yang ditemukan dari Google untuk key ini: ${geminiDitemukan.join(", ") || "(tidak ada)"}.`
+              : "Daftar model Gemini dari Google belum dimuat (dimuat otomatis di latar belakang; muat ulang halaman sebentar lagi)."}{" "}
+            Model yang ditemukan ikut dicoba otomatis kalau model lain penuh.
+          </p>
+        </div>
       </div>
     </div>
   );

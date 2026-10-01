@@ -26,6 +26,8 @@ export interface StatModel {
   terakhir: string;
   /** model tidak dicoba sebelum waktu ini (ISO) */
   tahanSampai?: string;
+  /** penyebab masa tahan: penuh/timeout (sementara) atau ditutup/tidak ada (rusak) */
+  jenis?: JenisGagalModel;
 }
 
 const KUNCI = "ai_model_statistik";
@@ -66,11 +68,13 @@ export async function catatModel(db: Db, penyedia: string, model: string, hasil:
     baru.berturut = 0;
     baru.ms = lama.ms ? Math.round(lama.ms * 0.7 + hasil.durasiMs * 0.3) : Math.round(hasil.durasiMs);
     delete baru.tahanSampai;
+    delete baru.jenis;
   } else if (jenis) {
     baru.gagal += 1;
     baru.berturut += 1;
     const tahan = jenis === "rusak" ? TAHAN_RUSAK_MS : tahanSementaraMs(baru.berturut);
     baru.tahanSampai = new Date(now.getTime() + tahan).toISOString();
+    baru.jenis = jenis;
   } else {
     return; // masalah akun/kunci: tidak mengubah apa pun soal model ini
   }
@@ -137,3 +141,18 @@ export function jenisGagal(penyedia: "gemini" | "openrouter", h: HasilClaude): J
 export const CALON_GEMINI = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"];
 /** Untuk tugas kecil (tebak kategori, review): yang ringan dulu. */
 export const CALON_GEMINI_RINGAN = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash"];
+
+/**
+ * Calon model Gemini berurutan. Kalau daftar dari Google (`ditemukan`) tersedia: model teruji yang masih terdaftar
+ * didahulukan (dijamin sudah pernah dites), lalu model baru yang ditemukan (versi terbaru dulu; untuk tugas kecil
+ * yang "lite" dulu). Kalau tidak tersedia: daftar tetap. Model pilihan pemilik selalu paling depan.
+ */
+export function calonGemini(ringan: boolean, utama: string | undefined, ditemukan: string[] | null): string[] {
+  const dasar = ringan ? CALON_GEMINI_RINGAN : CALON_GEMINI;
+  if (!ditemukan?.length) return [utama ?? "", ...dasar];
+  const ada = new Set(ditemukan);
+  const lite = (m: string) => (m.endsWith("-lite") ? 0 : 1);
+  const baru = ditemukan.filter((m) => !CALON_GEMINI.includes(m) && !CALON_GEMINI_RINGAN.includes(m));
+  if (ringan) baru.sort((a, b) => lite(a) - lite(b));
+  return [utama ?? "", ...dasar.filter((m) => ada.has(m)), ...baru];
+}

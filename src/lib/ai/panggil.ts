@@ -5,9 +5,9 @@ import { recipientsFor } from "../services/recipients";
 import { getSetting, getSettingNumber } from "../services/settings";
 import { adaLoginFolder, JENDELA, penjalanCli, type AlasanGagal, type HasilClaude, type InfoBatas, type JendelaBatas, type NamaJendela, type Penjalan } from "./claude";
 import { dekripsi, enkripsi, samarkan } from "./rahasia";
-import { adaLoginGemini, penjalanGeminiOtomatis, type PenjalanGemini } from "./gemini";
+import { adaLoginGemini, daftarModelGeminiCache, penjalanGeminiOtomatis, segarkanDaftarGemini, type PenjalanGemini } from "./gemini";
 import { daftarModelGratis, modelGratis, penjalanOpenRouter, type PenjalanOpenRouter } from "./openrouter";
-import { bacaStatistik, CALON_GEMINI, CALON_GEMINI_RINGAN, catatModel, jenisGagal, sedangDitahan, urutkanModel } from "./modelOtomatis";
+import { bacaStatistik, calonGemini, catatModel, jenisGagal, sedangDitahan, urutkanModel } from "./modelOtomatis";
 
 export type Penyedia = "claude" | "gemini" | "openrouter";
 export const CADANGAN = ["gemini", "openrouter"] as const;
@@ -536,13 +536,16 @@ async function modelGratisLayak(db: Db, r: PermintaanAI): Promise<string[]> {
  * pindah otomatis ke model lain yang terbukti paling andal (lihat modelOtomatis.ts). Saklar `ai_gemini_auto` /
  * `ai_openrouter_auto` mematikan perpindahan ini.
  */
-async function modelCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI): Promise<RencanaModel> {
+async function modelCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, kunci: string | null): Promise<RencanaModel> {
   if (r.model) return { daftar: [r.model], otomatis: false };
   const stat = await bacaStatistik(db);
   if (p === "gemini") {
     const utama = await getSetting(db, r.ringan ? "ai_gemini_model_ringan" : "ai_gemini_model");
     if ((await getSetting(db, "ai_gemini_auto")) === "0") return { daftar: utama ? [utama] : [], otomatis: false };
-    const calon = [utama, ...(r.ringan ? CALON_GEMINI_RINGAN : CALON_GEMINI)];
+    // daftar model dari Google dimuat di latar belakang (tidak pernah menunda balasan); sebelum siap dipakai daftar tetap
+    const ditemukan = daftarModelGeminiCache();
+    if (!ditemukan && kunci) segarkanDaftarGemini(kunci);
+    const calon = calonGemini(!!r.ringan, utama || undefined, ditemukan);
     return { daftar: urutkanModel("gemini", calon, utama || undefined, stat, r.now), otomatis: true };
   }
   const pilih = await getSetting(db, "ai_openrouter_model");
@@ -568,7 +571,7 @@ async function cobaCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, utama:
   const st = await bacaStatusCadangan(db, p);
   const tahan = TAHAN_CADANGAN[st.status];
   if (!r.paksa && tahan && st.terakhirCoba && r.now.getTime() - new Date(st.terakhirCoba).getTime() < tahan) return tidak(st.status as AlasanGagal, st.pesan);
-  const rencana = await modelCadangan(db, p, r);
+  const rencana = await modelCadangan(db, p, r, k.kunci);
   const { otomatis } = rencana;
   const antrian = [...rencana.daftar];
   let tambahanDimuat = false;
