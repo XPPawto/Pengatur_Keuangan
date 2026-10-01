@@ -906,16 +906,19 @@ describe("Groq: penyedia keempat", () => {
     expect(dipanggil.some((x) => x.startsWith("groq:"))).toBe(false);
   });
 
-  it("WhatsApp `gq <pesan>`: hanya Groq, ditandai Groq + model; tanpa key diberi tahu", async () => {
-    expect(parseMessage("gq apa itu inflasi?")).toEqual({ type: "tanya", pertanyaan: "apa itu inflasi?", penyedia: "groq" });
+  it("WhatsApp `gr <pesan>`: hanya Groq, ditandai Groq + model; tanpa key diberi tahu", async () => {
+    expect(parseMessage("gr apa itu inflasi?")).toEqual({ type: "tanya", pertanyaan: "apa itu inflasi?", penyedia: "groq" });
     expect(parseMessage("Groq: halo")).toEqual({ type: "tanya", pertanyaan: "halo", penyedia: "groq" });
+    expect(parseMessage("GR: halo")).toEqual({ type: "tanya", pertanyaan: "halo", penyedia: "groq" });
+    expect(parseMessage("gq halo")).not.toMatchObject({ penyedia: "groq" }); // kode lama (gq) sudah diganti gr
+    expect(parseMessage("graha 5k").type).not.toBe("tanya"); // "gr" hanya kode kalau berdiri sendiri sebagai kata pertama
     await handleMessage(db, { nomor: "085163544535", text: "masuk 300", now: at("2026-10-04", 10) });
     await handleMessage(db, { nomor: "085163544535", text: "ok", now: at("2026-10-04", 10) });
-    const [tanpa] = await handleMessage(db, { nomor: "085163544535", text: "gq halo", now: at("2026-10-05") });
+    const [tanpa] = await handleMessage(db, { nomor: "085163544535", text: "gr halo", now: at("2026-10-05") });
     expect(tanpa).toContain("Groq nggak bisa dipakai");
     await simpanKunciCadangan(db, "groq", KUNCI_Q);
     jawab.groq = () => ok(JSON.stringify({ balasan: "Inflasi itu kenaikan harga umum.", aksi: [], memori: [] }));
-    const [r] = await handleMessage(db, { nomor: "085163544535", text: "gq apa itu inflasi?", now: at("2026-10-05", 12, 5) });
+    const [r] = await handleMessage(db, { nomor: "085163544535", text: "gr apa itu inflasi?", now: at("2026-10-05", 12, 5) });
     expect(r).toContain("Inflasi itu kenaikan harga umum.");
     expect(r).toContain("dijawab lewat Groq · llama-3.3-70b-versatile");
     expect(dipanggil.every((x) => x.startsWith("groq:"))).toBe(true);

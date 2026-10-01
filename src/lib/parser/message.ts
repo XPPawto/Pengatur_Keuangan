@@ -197,7 +197,7 @@ export function parseMessage(raw: string, dict: CategoryDictionary = DEFAULT_DIC
   if (/^[1-9]$/.test(t)) return { type: "pilihan", n: Number(t) };
 
   // asisten AI & memori
-  const tanya = /^(?:(or|openrouter)|(gm|gemini)|(gq|groq)|tanya|ai|asisten|claude)\b[\s:,]*/.exec(t);
+  const tanya = /^(?:(or|openrouter)|(gm|gemini)|(gr|groq)|tanya|ai|asisten|claude)\b[\s:,]*/.exec(t);
   if (tanya) {
     const penyedia = tanya[1] ? ("openrouter" as const) : tanya[2] ? ("gemini" as const) : tanya[3] ? ("groq" as const) : undefined;
     return { type: "tanya", pertanyaan: raw.trim().replace(/^[^\s:,]+[\s:,]*/, "").trim(), ...(penyedia ? { penyedia } : {}) };
