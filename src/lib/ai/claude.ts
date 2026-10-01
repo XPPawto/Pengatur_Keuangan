@@ -46,9 +46,30 @@ export interface PemakaianToken {
   keluar: number;
 }
 
+/** Satu jendela batas langganan Claude (sesi 5 jam, mingguan, ...). */
+export interface JendelaBatas {
+  /** persen terpakai (0–100, bisa sedikit di atas 100) */
+  persen: number;
+  /** waktu reset, detik epoch Unix */
+  resetsAt: number | null;
+}
+
+export const JENDELA = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet"] as const;
+export type NamaJendela = (typeof JENDELA)[number];
+
+/** Batas langganan yang dilaporkan Claude Code lewat `rate_limit_event` (dari header respons Claude). */
+export interface InfoBatas {
+  /** allowed | allowed_warning | rejected */
+  status?: string;
+  /** jendela yang sedang membatasi */
+  jenis?: string;
+  resetsAt?: number | null;
+  jendela: Partial<Record<NamaJendela, JendelaBatas>>;
+}
+
 export type HasilClaude =
-  | { ok: true; teks: string; durasiMs: number; token?: PemakaianToken }
-  | { ok: false; alasan: AlasanGagal; pesan: string; durasiMs: number; token?: PemakaianToken };
+  | { ok: true; teks: string; durasiMs: number; token?: PemakaianToken; batas?: InfoBatas }
+  | { ok: false; alasan: AlasanGagal; pesan: string; durasiMs: number; token?: PemakaianToken; batas?: InfoBatas };
 
 export type Penjalan = (p: PanggilanClaude & { token: string | null }) => Promise<HasilClaude>;
 
@@ -76,7 +97,8 @@ export function lingkunganProses(token: string | null): Record<string, string> {
 }
 
 export function argumen(p: PanggilanClaude): string[] {
-  const args = ["-p", "--output-format", "json", "--model", p.model, "--system-prompt", p.system, "--no-session-persistence", "--strict-mcp-config"];
+  // stream-json (+ --verbose) supaya ikut menerima rate_limit_event: pemakaian sesi 5 jam & mingguan
+  const args = ["-p", "--output-format", "stream-json", "--verbose", "--model", p.model, "--system-prompt", p.system, "--no-session-persistence", "--strict-mcp-config"];
   if (p.gambar) args.push("--tools", "Read", "--allowedTools", "Read", "--max-turns", "4");
   else args.push("--tools", "", "--max-turns", "1");
   return args;
@@ -113,21 +135,63 @@ export function tokenDari(j: HasilJson | null): PemakaianToken | undefined {
   return { masuk: n(u.input_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens), keluar: n(u.output_tokens) };
 }
 
-/** Ambil objek hasil dari stdout `--output-format json` (toleran terhadap baris lain). */
-export function bacaKeluaran(stdout: string): HasilJson | null {
+function barisJson(stdout: string): Record<string, unknown>[] {
   const t = stdout.trim();
-  const calon = [t, ...t.split("\n").reverse()];
-  for (const c of calon) {
+  const out: Record<string, unknown>[] = [];
+  for (const c of t.startsWith("{") && !t.includes("\n") ? [t] : t.split("\n")) {
     const s = c.trim();
     if (!s.startsWith("{")) continue;
     try {
-      const j = JSON.parse(s) as HasilJson;
-      if (j && typeof j === "object" && ("result" in j || j.type === "result")) return j;
+      const j = JSON.parse(s);
+      if (j && typeof j === "object") out.push(j);
     } catch {
       /* bukan JSON */
     }
   }
-  return null;
+  return out;
+}
+
+/** Ambil objek hasil dari stdout `--output-format stream-json` / `json` (toleran terhadap baris lain). */
+export function bacaKeluaran(stdout: string): HasilJson | null {
+  const semua = barisJson(stdout).reverse();
+  return (semua.find((j) => j.type === "result") ?? semua.find((j) => "result" in j) ?? null) as HasilJson | null;
+}
+
+/** persen dari utilization (0–1; nilai > 2 dianggap sudah persen). */
+function persen(u: unknown): number | null {
+  if (typeof u !== "number" || !Number.isFinite(u) || u < 0) return null;
+  return Math.round((u > 2 ? u : u * 100) * 10) / 10;
+}
+const detik = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.round(v > 1e12 ? v / 1000 : v) : null);
+
+/**
+ * Kumpulkan info batas langganan dari semua `rate_limit_event` di keluaran. Mendukung bidang
+ * per-jendela (`unifiedWindows`: five_hour, seven_day, …) maupun bidang utama (rateLimitType + utilization).
+ * Event yang lebih akhir menimpa yang lebih awal. undefined kalau tidak ada data.
+ */
+export function bacaBatas(stdout: string): InfoBatas | undefined {
+  let info: InfoBatas | undefined;
+  for (const j of barisJson(stdout)) {
+    if (j.type !== "rate_limit_event") continue;
+    const r = j.rate_limit_info as Record<string, unknown> | undefined;
+    if (!r || typeof r !== "object") continue;
+    info ??= { jendela: {} };
+    if (typeof r.status === "string") info.status = r.status;
+    if (typeof r.rateLimitType === "string") info.jenis = r.rateLimitType;
+    if (r.resetsAt !== undefined) info.resetsAt = detik(r.resetsAt);
+    const jenis = r.rateLimitType as NamaJendela;
+    const p = persen(r.utilization);
+    if (JENDELA.includes(jenis) && p !== null) info.jendela[jenis] = { persen: p, resetsAt: detik(r.resetsAt) };
+    const w = (r.unifiedWindows ?? r.windows) as Record<string, { utilization?: unknown; resetsAt?: unknown; resets_at?: unknown }> | undefined;
+    if (w && typeof w === "object") {
+      for (const k of JENDELA) {
+        const x = w[k];
+        const px = persen(x?.utilization);
+        if (x && px !== null) info.jendela[k] = { persen: px, resetsAt: detik(x.resetsAt ?? x.resets_at) };
+      }
+    }
+  }
+  return info;
 }
 
 /** Penjalan sungguhan: spawn `claude -p`. */
@@ -176,9 +240,16 @@ export const penjalanCli: Penjalan = (p) =>
       clearTimeout(timer);
       const j = bacaKeluaran(out);
       const token = tokenDari(j);
-      if (j && !j.is_error && typeof j.result === "string" && j.subtype === "success") return selesai({ ok: true, teks: j.result, token });
-      const pesan = (j?.result || err || out || `keluar dengan kode ${code}`).trim().slice(0, 300);
-      selesai({ ok: false, alasan: golongkan(pesan, j?.api_error_status), pesan, token });
+      const batas = bacaBatas(out);
+      if (j && !j.is_error && typeof j.result === "string" && j.subtype === "success") return selesai({ ok: true, teks: j.result, token, batas });
+      // tanpa baris result: pakai stderr / teks non-JSON saja (baris event JSON bisa memicu salah golong)
+      const teksLain = out
+        .split("\n")
+        .filter((l) => !l.trim().startsWith("{"))
+        .join("\n");
+      const pesan = (j?.result || err || teksLain || `keluar dengan kode ${code}`).trim().slice(0, 300);
+      const alasan = batas?.status === "rejected" ? "limit" : golongkan(pesan, j?.api_error_status);
+      selesai({ ok: false, alasan, pesan, token, batas });
     });
     child.stdin!.on("error", () => {
       /* proses mati sebelum stdin selesai; ditangani di close */

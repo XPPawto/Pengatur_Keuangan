@@ -44,7 +44,7 @@ Semua fase PRD (1–3) sudah dikerjakan, ditambah fitur lanjutan: **undo untuk s
 | Aktivitas | Jejak semua perubahan (siapa, kapan, dari WA/web) dan tombol Batalkan untuk tiap aksi |
 | Asisten AI | Chat dengan Claude soal duit lo (pertanyaan, rencana menu, kenapa boros, target kado, draf pesan ke ortu), usulan aksi yang dijalankan setelah disetujui, memori, kata yang dipelajari, saklar fitur & batas harian |
 | Kesehatan sistem | Status bot, WhatsApp, antrean pesan, backup, penyimpanan, asisten AI; endpoint `/api/health` |
-| Koneksi | **Peta node** DompetKos ↔ WhatsApp (nomor pemilik, keluarga, antrean) ↔ Claude (fitur AI), garis bergerak saat tersambung, bisa digeser & zoom; pairing WhatsApp (QR/kode); token Claude; **pemakaian Claude** (panggilan, token, waktu jawab, grafik harian, log) |
+| Koneksi | **Peta node** DompetKos ↔ WhatsApp (nomor pemilik, keluarga, antrean) ↔ Claude (fitur AI), garis bergerak saat tersambung, bisa digeser & zoom; pairing WhatsApp (QR/kode); token Claude; **batas langganan sesi 5 jam & mingguan** + jam reset; **pemakaian Claude** (panggilan, token, waktu jawab, grafik harian, log) |
 | Pengaturan | Nomor penerima & perannya, jadwal pengingat, nama, batas tahan belanja, login kode WA, ekspor Excel/CSV, backup & unduh backup, antrean pesan otomatis |
 
 Semua grafik punya tooltip saat disentuh dan tampilan tabel. Transaksi dari WhatsApp muncul di website dalam ±4 detik tanpa refresh.
@@ -228,7 +228,7 @@ Aturan anti-spam: **tidak ada pesan 22.00–06.00**, **maksimal 1 pesan otomatis
 ## 11. Untuk developer
 
 ```bash
-npm test           # 243 tes: parser, jatah, aturan potong, alur bot, keluarga, penjadwal, aturan kirim,
+npm test           # 248 tes: parser, jatah, aturan potong, alur bot, keluarga, penjadwal, aturan kirim,
                    # undo, rekonsiliasi, kiriman, hutang-piutang, autopilot, skor, struk, ekspor, backup, OTP,
                    # asisten AI (runner CLI, kuota, status, usulan, memori, foto, review) — tanpa memanggil Claude asli
 npm run typecheck
@@ -297,5 +297,6 @@ Kalimat yang dipahami perintah biasa tetap diproses instan tanpa AI (hemat kuota
 - AI **tidak bisa mengubah data sendiri**. Semua aksi (catat, pindah, daftar belanja, pesan ke ortu) hanya usulan, jalan setelah `ok`, tercatat di Aktivitas, dan bisa di-`batal`. Usulan divalidasi ulang di server (nominal wajar, amplop valid, tabungan kado tidak boleh diambil).
 - Nomor keluarga **tidak pernah** dilayani AI.
 - **Kalau Claude mati** (token kedaluwarsa/dicabut, kena batas langganan, Claude Code belum terpasang): bot tetap jalan normal, fitur AI istirahat, pemilik dikabari **sekali** lewat WhatsApp, dan bot mengecek ulang tiap 30 menit. Begitu pulih (token baru ditempel atau batas reset), AI nyala sendiri dan pemilik dikabari.
-- **Batas harian** (default 40 panggilan), pilihan model (utama & ringan), dan saklar tiap fitur ada di halaman Asisten. Pemakaian rinci (panggilan, token, waktu jawab, log) di halaman Koneksi. Sisa batas langganan dari Claude sendiri dilihat di claude.ai → Settings → Usage.
+- **Batas langganan Claude (sesi 5 jam & mingguan)** dibaca dari `rate_limit_event` yang dikirim Claude Code (`--output-format stream-json`) setiap kali bot memanggil, lalu ditampilkan sebagai bar + jam reset di halaman Koneksi, peta, dan Asisten. Pemakaian lo di claude.ai ikut terhitung (angkanya diperbarui saat bot memanggil lagi; angka paling baru selalu di claude.ai → Settings → Usage). Kalau kena batas, AI istirahat **persis sampai jam reset**; kalau sesi 5 jam ≥90% (atau mingguan ≥95%), tugas kecil (tebak kategori, review) otomatis dihemat supaya sisa kuota buat lo.
+- **Batas harian bot** (default 40 panggilan), pilihan model (utama & ringan), dan saklar tiap fitur ada di halaman Asisten. Pemakaian rinci (panggilan, token, waktu jawab, log) di halaman Koneksi.
 

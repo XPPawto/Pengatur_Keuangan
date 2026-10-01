@@ -63,7 +63,7 @@ const bulat = (v: unknown, min: number, max: number): number | null => {
 const teks = (v: unknown, maks: number) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, maks) : "");
 
 /** Pesan singkat saat AI tidak bisa dipakai. */
-export function pesanAIMati(alasan: AlasanGagal | undefined): string {
+export function pesanAIMati(alasan: AlasanGagal | undefined, reset?: string | null): string {
   switch (alasan) {
     case "dimatikan":
       return "Asisten AI lagi dimatikan (bisa dinyalakan di website → Asisten).";
@@ -72,7 +72,7 @@ export function pesanAIMati(alasan: AlasanGagal | undefined): string {
     case "kuota":
       return "Jatah pemakaian AI hari ini udah habis (bisa dinaikkan di website → Asisten). Besok nyala lagi.";
     case "limit":
-      return "Asisten AI lagi istirahat: kena batas pemakaian langganan Claude. Nanti nyala lagi otomatis.";
+      return `Asisten AI lagi istirahat: kena batas pemakaian langganan Claude. Nyala lagi otomatis${reset ? ` jam ${reset}` : " setelah batasnya reset"}.`;
     case "belum_login":
       return "Asisten AI lagi mati: token Claude ditolak. Perbarui token di website → Asisten.";
     case "tidak_ada":

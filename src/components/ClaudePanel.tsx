@@ -3,6 +3,7 @@ import ConfirmButton from "./ConfirmButton";
 import ProgressBar from "./ProgressBar";
 import { Icon } from "./icons";
 import { Badge } from "./ui";
+import BatasLangganan from "./BatasLangganan";
 import { hapusTokenAction, simpanTokenAction, tesKoneksiAction } from "@/app/actions-ai";
 import type { statusAI } from "@/lib/ai/panggil";
 import { fmtTanggal, wibDate, wibHM } from "@/lib/time";
@@ -54,7 +55,7 @@ export default function ClaudePanel({ st, model }: { st: StatusAI; model: string
         </Baris>
         <Baris label="Model">{model}</Baris>
         <div>
-          <Baris label="Pemakaian hari ini">
+          <Baris label="Panggilan bot hari ini">
             <span className="num font-medium">
               {st.pemakaian.hariIni} / {st.pemakaian.batas}
             </span>
@@ -72,6 +73,11 @@ export default function ClaudePanel({ st, model }: { st: StatusAI; model: string
         </Baris>
       </dl>
       {st.pesan && !st.siap && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-xs text-warn">{st.pesan}</p>}
+      <div className="mt-3 border-t border-line pt-3">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">Batas langganan Claude</p>
+        {st.tahanSampai && <p className="mb-2 rounded-lg bg-warn-bg px-3 py-2 text-xs text-warn">Kena batas. AI istirahat sampai {st.tahanSampai} WIB, bot tetap jalan normal.</p>}
+        <BatasLangganan batas={st.langganan} />
+      </div>
       <div className="mt-3 space-y-2 border-t border-line pt-3">
         <ActionForm
           action={tesKoneksiAction}

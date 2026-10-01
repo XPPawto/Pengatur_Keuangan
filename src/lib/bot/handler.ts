@@ -426,7 +426,7 @@ async function keAsisten(db: Db, nomor: string, text: string, parsed: ParsedMess
   if (!cocok) return { ya: false };
   const st = await statusAI(db, now);
   if (st.siap) return { ya: true };
-  return { ya: false, catatan: st.kondisi === "dimatikan" ? undefined : pesanAIMati(st.kondisi === "belum_dicek" || st.kondisi === "ok" ? "gagal" : st.kondisi) };
+  return { ya: false, catatan: st.kondisi === "dimatikan" ? undefined : pesanAIMati(st.kondisi === "belum_dicek" || st.kondisi === "ok" ? "gagal" : st.kondisi, st.tahanSampai) };
 }
 
 async function cmdTanya(db: Db, nomor: string, pertanyaan: string, now: Date): Promise<string[]> {

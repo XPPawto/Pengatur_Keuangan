@@ -2,6 +2,7 @@ import AsistenChat from "@/components/AsistenChat";
 import { nadaStatus } from "@/components/ClaudePanel";
 import ActionForm from "@/components/ActionForm";
 import ProgressBar from "@/components/ProgressBar";
+import BatasLangganan from "@/components/BatasLangganan";
 import { Icon } from "@/components/icons";
 import Link from "next/link";
 import { Alert, Badge, Card, PageHeader } from "@/components/ui";
@@ -31,7 +32,10 @@ export default async function AsistenPage() {
     prisma.kataKategori.findMany({ orderBy: { dibuatPada: "desc" }, take: 30 }),
   ]);
   const tone = nadaStatus(st);
-  const riwayat = chat.reverse().map((c) => ({ peran: c.peran === "user" ? ("user" as const) : ("asisten" as const), isi: c.isi }));
+  const riwayat = chat.reverse().map((c) => ({
+    peran: c.peran === "user" ? ("user" as const) : ("asisten" as const),
+    isi: c.isi.replace(/^\[usulan (\d+)\] /gm, "• Usulan $1: "),
+  }));
   const pakai = Math.round((st.pemakaian.hariIni / Math.max(1, st.pemakaian.batas)) * 100);
 
   return (
@@ -64,7 +68,7 @@ export default async function AsistenPage() {
               </div>
               <div>
                 <div className="flex items-center justify-between gap-2">
-                  <dt className="text-muted">Pemakaian hari ini</dt>
+                  <dt className="text-muted">Panggilan bot hari ini</dt>
                   <dd className="num font-medium">
                     {st.pemakaian.hariIni} / {st.pemakaian.batas}
                   </dd>
@@ -75,6 +79,11 @@ export default async function AsistenPage() {
               </div>
             </dl>
             {st.pesan && !st.siap && <p className="mt-3 rounded-lg bg-warn-bg px-3 py-2 text-xs text-warn">{st.pesan}</p>}
+            {st.langganan.length > 0 && (
+              <div className="mt-3 border-t border-line pt-3">
+                <BatasLangganan batas={st.langganan} ringkas />
+              </div>
+            )}
           </Card>
 
           <Card title="Pengaturan AI" icon="settings">

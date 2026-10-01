@@ -17,7 +17,19 @@ const FITUR_PETA: { kode: FiturAI; saklar: "ai_aktif" | "ai_pesan_bebas" | "ai_s
 
 export interface DataKoneksi {
   wa: { status: StatusWa; nomorBot: string | null; botHidup: boolean; alasan: string | null };
-  ai: { kondisi: string; label: string; siap: boolean; aktif: boolean; adaToken: boolean; model: string; pakai: number; batas: number };
+  ai: {
+    kondisi: string;
+    label: string;
+    siap: boolean;
+    aktif: boolean;
+    adaToken: boolean;
+    model: string;
+    pakai: number;
+    batas: number;
+    /** persen terpakai langganan: sesi 5 jam & mingguan (null = belum ada data) */
+    sesi5Jam: number | null;
+    mingguan: number | null;
+  };
   nomor: { pemilik: number; keluarga: number; labelKeluarga: string[] };
   fitur: { kode: FiturAI; label: string; hariIni: number; aktif: boolean }[];
   pesanHariIni: { masuk: number; keluar: number };
@@ -46,7 +58,18 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
       botHidup: !!c?.workerPing && now.getTime() - c.workerPing.getTime() < 60_000,
       alasan: c?.alasan ?? null,
     },
-    ai: { kondisi: ai.kondisi, label: ai.label, siap: ai.siap, aktif: ai.aktif, adaToken: ai.token.ada, model, pakai: ai.pemakaian.hariIni, batas: ai.pemakaian.batas },
+    ai: {
+      kondisi: ai.kondisi,
+      label: ai.label,
+      siap: ai.siap,
+      aktif: ai.aktif,
+      adaToken: ai.token.ada,
+      model,
+      pakai: ai.pemakaian.hariIni,
+      batas: ai.pemakaian.batas,
+      sesi5Jam: ai.langganan.find((j) => j.kode === "five_hour")?.persen ?? null,
+      mingguan: ai.langganan.find((j) => j.kode === "seven_day")?.persen ?? null,
+    },
     nomor: {
       pemilik: aktif.filter((r) => r.peran === "pemilik").length,
       keluarga: aktif.filter((r) => r.peran === "keluarga").length,

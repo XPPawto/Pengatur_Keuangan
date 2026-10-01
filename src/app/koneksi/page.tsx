@@ -65,15 +65,28 @@ export default async function KoneksiPage() {
             <ClaudePanel st={st} model={model} />
           </Card>
           <p className="text-xs text-muted">
-            Bot menjalankan <code>claude -p</code> dengan token langganan lo, tanpa API key, jadi tidak ada tagihan per token. Batas pemakaian langganan (per 5 jam & mingguan) dihitung Claude dan dipakai bersama claude.ai; cek sisanya di claude.ai → Settings → Usage. Atur fitur & batas harian di halaman Asisten.
+            Bot menjalankan <code>claude -p</code> dengan token langganan lo, tanpa API key, jadi tidak ada tagihan per token. Batas langganan (sesi 5 jam & mingguan) dipakai bersama claude.ai; angkanya dibaca dari respons Claude setiap kali bot memanggil, angka paling baru selalu ada di claude.ai → Settings → Usage. Kalau kena batas, AI istirahat sampai jam reset; kalau sesi 5 jam ≥90%, tugas kecil (tebak kategori, review) dihemat. Atur fitur & batas harian bot di halaman Asisten.
           </p>
         </section>
       </div>
 
       <section id="pemakaian" className="scroll-mt-20 space-y-3">
         <h2 className="section-title">Pemakaian Claude</h2>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Stat icon="bot" label="Panggilan hari ini" value={`${u.hariIni.panggilan}/${st.pemakaian.batas}`} hint={u.hariIni.gagal ? `${u.hariIni.gagal} gagal` : "semua berhasil"} tone={u.hariIni.panggilan >= st.pemakaian.batas ? "bad" : undefined} />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+          {(["five_hour", "seven_day"] as const).map((k) => {
+            const j = st.langganan.find((x) => x.kode === k);
+            return (
+              <Stat
+                key={k}
+                icon={k === "five_hour" ? "clock" : "calendar"}
+                label={k === "five_hour" ? "Sesi 5 jam (langganan)" : "Mingguan (langganan)"}
+                value={j ? `${Math.round(j.persen)}%` : "–"}
+                hint={!j ? "muncul setelah bot memanggil Claude" : j.sudahReset ? "sudah reset" : j.reset ? `reset ${j.reset}` : "terpakai"}
+                tone={j && j.persen >= 90 ? "bad" : j && j.persen >= 70 ? "warn" : undefined}
+              />
+            );
+          })}
+          <Stat icon="bot" label="Panggilan bot hari ini" value={`${u.hariIni.panggilan}/${st.pemakaian.batas}`} hint={u.hariIni.gagal ? `${u.hariIni.gagal} gagal` : "semua berhasil"} tone={u.hariIni.panggilan >= st.pemakaian.batas ? "bad" : undefined} />
           <Stat icon="file" label="Token hari ini" value={angka(u.hariIni.tokenMasuk + u.hariIni.tokenKeluar)} hint={`${angka(u.hariIni.tokenMasuk)} masuk · ${angka(u.hariIni.tokenKeluar)} keluar`} />
           <Stat icon="clock" label="Waktu jawab" value={u.tujuhHari.rataDetik === null ? "–" : `${u.tujuhHari.rataDetik.toFixed(1)} dtk`} hint="rata-rata 7 hari" />
           <Stat

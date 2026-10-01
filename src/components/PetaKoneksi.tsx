@@ -169,7 +169,11 @@ function bangunNode(d: DataKoneksi): Record<IdNode, Node> {
         </span>
       ),
       judul: "Claude",
-      sub: !d.ai.adaToken ? "Belum disambungkan" : `${d.ai.label} · ${d.ai.model} · ${d.ai.pakai}/${d.ai.batas}`,
+      sub: !d.ai.adaToken
+        ? "Belum disambungkan"
+        : d.ai.sesi5Jam !== null || d.ai.mingguan !== null
+          ? `${d.ai.siap ? "" : `${d.ai.label} · `}5 jam ${Math.round(d.ai.sesi5Jam ?? 0)}% · minggu ${Math.round(d.ai.mingguan ?? 0)}%`
+          : `${d.ai.label} · ${d.ai.model} · ${d.ai.pakai}/${d.ai.batas}`,
       href: "#claude",
       nada: aiNada,
     },

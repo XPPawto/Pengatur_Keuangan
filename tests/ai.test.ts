@@ -3,9 +3,9 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { handleMessage } from "@/lib/bot/handler";
 import { fromWib } from "@/lib/time";
-import { argumen, bacaKeluaran, golongkan, lingkunganProses, penjalanCli, type HasilClaude, type PanggilanClaude } from "@/lib/ai/claude";
+import { argumen, bacaBatas, bacaKeluaran, golongkan, lingkunganProses, penjalanCli, type HasilClaude, type PanggilanClaude } from "@/lib/ai/claude";
 import { dekripsi, enkripsi } from "@/lib/ai/rahasia";
-import { bacaStatus, cekPulihAI, getTokenAI, panggilAI, setPenjalanAI, simpanTokenAI, statusAI } from "@/lib/ai/panggil";
+import { bacaStatus, batasClaude, cekPulihAI, getTokenAI, jamReset, panggilAI, setPenjalanAI, simpanTokenAI, statusAI } from "@/lib/ai/panggil";
 import { ambilJson, jalankanAksiAI, tanyaAsisten, validasiAksi } from "@/lib/ai/asisten";
 import { undoActivity, lastUndoable } from "@/lib/services/undo";
 import { jadwalkanPengingat } from "@/lib/services/scheduler";
@@ -77,7 +77,7 @@ describe("runner Claude Code CLI", () => {
 
   it("argumen: tanpa tool & prompt tidak lewat argumen; foto hanya boleh Read", () => {
     const a = argumen({ system: "S", prompt: "DATA RAHASIA", model: "sonnet" });
-    expect(a).toEqual(expect.arrayContaining(["-p", "--output-format", "json", "--model", "sonnet", "--no-session-persistence"]));
+    expect(a).toEqual(expect.arrayContaining(["-p", "--output-format", "stream-json", "--verbose", "--model", "sonnet", "--no-session-persistence"]));
     expect(a[a.indexOf("--tools") + 1]).toBe("");
     expect(a.join(" ")).not.toContain("DATA RAHASIA");
     const g = argumen({ system: "S", prompt: "p", model: "sonnet", gambar: "/tmp/x.jpg" });
@@ -109,12 +109,22 @@ describe("runner Claude Code CLI", () => {
     const r = JSON.parse(h.teks);
     expect(r).toMatchObject({ token: "tok-rahasia", apiKey: null, panjangPrompt: "halo claude".length });
     expect(r.args).toContain("haiku");
+    expect(r.args).toEqual(expect.arrayContaining(["stream-json", "--verbose"]));
     expect(h.token).toEqual({ masuk: 105, keluar: 20 });
+    expect(h.batas?.jendela).toEqual({ five_hour: { persen: 34, resetsAt: 1791000000 }, seven_day: { persen: 61, resetsAt: 1791400000 } });
+  });
+
+  it("membaca batas langganan dari rate_limit_event (per jendela maupun bidang utama)", () => {
+    const ev = (info: unknown) => JSON.stringify({ type: "rate_limit_event", rate_limit_info: info });
+    const b = bacaBatas([ev({ status: "allowed_warning", rateLimitType: "seven_day", utilization: 0.825, resetsAt: 1791400000 }), '{"type":"result","result":"x"}'].join("\n"));
+    expect(b).toEqual({ status: "allowed_warning", jenis: "seven_day", resetsAt: 1791400000, jendela: { seven_day: { persen: 82.5, resetsAt: 1791400000 } } });
+    expect(bacaBatas(ev({ status: "allowed", unifiedWindows: { five_hour: { utilization: 0.1, resetsAt: 1 } } }))?.jendela.five_hour?.persen).toBe(10);
+    expect(bacaBatas('{"type":"result","result":"x"}')).toBeUndefined();
   });
 
   it("spawn CLI: 401, limit, timeout, keluaran rusak, CLI tidak ada", async () => {
     expect(await jalankan("MODE:401")).toMatchObject({ ok: false, alasan: "belum_login" });
-    expect(await jalankan("MODE:limit")).toMatchObject({ ok: false, alasan: "limit" });
+    expect(await jalankan("MODE:limit")).toMatchObject({ ok: false, alasan: "limit", batas: { status: "rejected" } });
     expect(await jalankan("MODE:diam", { timeoutMs: 400 })).toMatchObject({ ok: false, alasan: "timeout" });
     expect(await jalankan("MODE:rusak")).toMatchObject({ ok: false, alasan: "gagal" });
     expect(await penjalanCli({ system: "s", prompt: "p", model: "haiku", token: null })).toMatchObject({ ok: false, alasan: "tidak_ada" });
@@ -170,6 +180,59 @@ describe("penjaga panggilAI", () => {
     const pulih = await db.outbox.findMany({ where: { jenis: "ai_status", isi: { contains: "aktif lagi" } } });
     expect(pulih).toHaveLength(2);
     expect(await cekPulihAI(db, at("2026-10-05", 10))).toBe(false); // sehat → tidak perlu cek
+  });
+});
+
+describe("batas langganan Claude (sesi 5 jam & mingguan)", () => {
+  const detik = (d: Date) => Math.floor(d.getTime() / 1000);
+  const tanya = (now: Date, fitur: "chat_web" | "kategori" = "chat_web") => panggilAI(db, { fitur, system: "s", prompt: "p", now });
+
+  it("angka terakhir disimpan; setelah lewat waktu reset dianggap 0%", async () => {
+    await sambung();
+    const now = at("2026-10-05", 9);
+    jawab = () => ({ ...ok("x"), batas: { status: "allowed", jendela: { five_hour: { persen: 40, resetsAt: detik(at("2026-10-05", 12)) }, seven_day: { persen: 70, resetsAt: detik(at("2026-10-08", 7)) } } } });
+    await tanya(now);
+    const b = await batasClaude(db, at("2026-10-05", 10));
+    expect(b.map((x) => [x.kode, x.persen, x.reset])).toEqual([
+      ["five_hour", 40, "12.00"],
+      ["seven_day", 70, "Kam 07.00"],
+    ]);
+    const nanti = await batasClaude(db, at("2026-10-05", 13));
+    expect(nanti[0]).toMatchObject({ persen: 0, sudahReset: true });
+    expect((await dataKoneksi(db, at("2026-10-05", 10))).ai).toMatchObject({ sesi5Jam: 40, mingguan: 70 });
+  });
+
+  it("kena batas: AI istirahat persis sampai jam reset, pemilik diberi tahu jamnya", async () => {
+    await sambung();
+    jawab = () => ({ ...gagal("limit", "usage limit reached"), batas: { status: "rejected", jenis: "five_hour", resetsAt: detik(at("2026-10-05", 11)), jendela: { five_hour: { persen: 100, resetsAt: detik(at("2026-10-05", 11)) } } } });
+    await tanya(at("2026-10-05", 9));
+    const kabar = await db.outbox.findFirst({ where: { jenis: "ai_status" } });
+    expect(kabar?.isi).toContain("reset (11.00)");
+    expect((await statusAI(db, at("2026-10-05", 9, 30))).tahanSampai).toBe("11.00");
+    const r = await tanya(at("2026-10-05", 10, 30)); // lebih dari 20 menit, tapi belum reset
+    expect(r).toMatchObject({ ok: false, alasan: "limit" });
+    expect(panggilan).toHaveLength(1);
+    expect(await cekPulihAI(db, at("2026-10-05", 10, 45))).toBe(false);
+    jawab = () => ok("siap");
+    expect(await cekPulihAI(db, at("2026-10-05", 11, 1))).toBe(true);
+    expect(panggilan).toHaveLength(2);
+  });
+
+  it("hemat otomatis: sesi 5 jam ≥90% → tugas kecil tidak memakai Claude, ngobrol tetap jalan", async () => {
+    await sambung();
+    jawab = () => ({ ...ok("x"), batas: { jendela: { five_hour: { persen: 92, resetsAt: detik(at("2026-10-05", 12)) } } } });
+    await tanya(at("2026-10-05", 9));
+    expect(await tanya(at("2026-10-05", 9, 1), "kategori")).toMatchObject({ ok: false, alasan: "limit" });
+    expect(await tanya(at("2026-10-05", 9, 2))).toMatchObject({ ok: true });
+    expect(panggilan).toHaveLength(2);
+    expect((await bacaStatus(db)).status).toBe("ok"); // penghematan bukan gangguan
+  });
+
+  it("format jam reset", () => {
+    const now = at("2026-10-05", 9);
+    expect(jamReset(detik(at("2026-10-05", 14, 5)), now)).toBe("14.05");
+    expect(jamReset(detik(at("2026-10-06", 7)), now)).toBe("besok 07.00");
+    expect(jamReset(detik(at("2026-10-20", 7)), now)).toBe("20 Okt 07.00");
   });
 });
 

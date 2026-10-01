@@ -205,7 +205,7 @@ export default function AsistenChat({ riwayat, siap, pesanMati }: { riwayat: Pes
           }}
           rows={1}
           maxLength={2000}
-          placeholder={siap ? "Tanya atau cerita apa aja… (Enter kirim)" : "Asisten belum aktif"}
+          placeholder={siap ? "Tanya atau cerita apa aja…" : "Asisten belum aktif"}
           disabled={!siap}
           className="input max-h-40 min-h-11 flex-1 resize-y"
         />

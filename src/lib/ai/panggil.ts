@@ -1,9 +1,9 @@
 import type { Db } from "../db";
-import { fromWib, wibDate } from "../time";
+import { fmtTanggal, fromWib, HARI, wibDate, wibHM, wibWeekday } from "../time";
 import { enqueue } from "../services/outbox";
 import { recipientsFor } from "../services/recipients";
 import { getSetting, getSettingNumber } from "../services/settings";
-import { adaLoginFolder, penjalanCli, type AlasanGagal, type HasilClaude, type Penjalan } from "./claude";
+import { adaLoginFolder, JENDELA, penjalanCli, type AlasanGagal, type HasilClaude, type InfoBatas, type JendelaBatas, type NamaJendela, type Penjalan } from "./claude";
 import { dekripsi, enkripsi, samarkan } from "./rahasia";
 
 export type FiturAI = "chat_web" | "chat_wa" | "struk" | "kategori" | "review" | "cek";
@@ -26,6 +26,75 @@ export interface StatusTersimpan {
   sejak: string;
   terakhirCoba: string | null;
   terakhirOk: string | null;
+  /** kena batas langganan: jangan panggil Claude sebelum waktu reset ini */
+  tahanSampai?: string | null;
+}
+
+// ---------------------------------------------------------------- batas langganan (sesi 5 jam & mingguan)
+
+export const LABEL_JENDELA: Record<NamaJendela, string> = {
+  five_hour: "Sesi 5 jam",
+  seven_day: "Mingguan (semua model)",
+  seven_day_opus: "Mingguan (Opus)",
+  seven_day_sonnet: "Mingguan (Sonnet)",
+};
+
+interface BatasTersimpan {
+  jendela: Partial<Record<NamaJendela, JendelaBatas & { diperbarui: string }>>;
+  status?: string;
+}
+
+/** Jam reset dalam WIB yang enak dibaca: "15.20", "besok 07.00", "Sen 07.00", "3 Okt 07.00". */
+export function jamReset(detikEpoch: number, now: Date): string {
+  const d = new Date(detikEpoch * 1000);
+  const { jam, menit } = wibHM(d);
+  const hm = `${String(jam).padStart(2, "0")}.${String(menit).padStart(2, "0")}`;
+  const selisihHari = Math.round((fromWib(wibDate(d)).getTime() - fromWib(wibDate(now)).getTime()) / 86400_000);
+  if (selisihHari <= 0) return hm;
+  if (selisihHari === 1) return `besok ${hm}`;
+  if (selisihHari < 7) return `${HARI[wibWeekday(d)].slice(0, 3)} ${hm}`;
+  return `${fmtTanggal(wibDate(d))} ${hm}`;
+}
+
+async function simpanBatas(db: Db, b: InfoBatas, now: Date) {
+  const lama = await bacaBatasMentah(db);
+  const iso = now.toISOString();
+  for (const k of JENDELA) {
+    const j = b.jendela[k];
+    if (j) lama.jendela[k] = { ...j, diperbarui: iso };
+  }
+  if (b.status) lama.status = b.status;
+  const nilai = JSON.stringify(lama);
+  await db.setting.upsert({ where: { kunci: "ai_batas_claude" }, update: { nilai }, create: { kunci: "ai_batas_claude", nilai } });
+}
+
+async function bacaBatasMentah(db: Db): Promise<BatasTersimpan> {
+  const row = await db.setting.findUnique({ where: { kunci: "ai_batas_claude" } });
+  try {
+    return row ? (JSON.parse(row.nilai) as BatasTersimpan) : { jendela: {} };
+  } catch {
+    return { jendela: {} };
+  }
+}
+
+/**
+ * Pemakaian langganan Claude per jendela (dari respons terakhir yang dilihat bot). Jendela yang waktu
+ * resetnya sudah lewat ditampilkan 0% (sudah reset) sampai bot melihat angka baru.
+ */
+export async function batasClaude(db: Db, now: Date) {
+  const b = await bacaBatasMentah(db);
+  return JENDELA.filter((k) => b.jendela[k]).map((k) => {
+    const j = b.jendela[k]!;
+    const lewat = j.resetsAt !== null && j.resetsAt * 1000 <= now.getTime();
+    return {
+      kode: k,
+      label: LABEL_JENDELA[k],
+      persen: lewat ? 0 : j.persen,
+      reset: j.resetsAt && !lewat ? jamReset(j.resetsAt, now) : null,
+      sudahReset: lewat,
+      diperbarui: j.diperbarui,
+    };
+  });
 }
 
 /** Status yang "menetap" (perlu tindakan pemilik / menunggu reset) — panggilan berikutnya ditahan sebentar. */
@@ -126,12 +195,13 @@ export const LABEL_KONDISI: Record<KondisiAI | "dimatikan" | "kuota", string> = 
 
 /** Ringkasan lengkap untuk halaman Asisten, Sistem, dan bot. */
 export async function statusAI(db: Db, now: Date) {
-  const [aktif, batas, tersimpan, tok, pakai] = await Promise.all([
+  const [aktif, batas, tersimpan, tok, pakai, langganan] = await Promise.all([
     getSetting(db, "ai_aktif"),
     getSettingNumber(db, "ai_batas_harian"),
     bacaStatus(db),
     getTokenAI(db),
     pemakaianHariIni(db, now),
+    batasClaude(db, now),
   ]);
   const adaAkses = !!tok.token || tok.sumber === "folder";
   const kondisi: KondisiAI | "dimatikan" | "kuota" =
@@ -144,6 +214,8 @@ export async function statusAI(db: Db, now: Date) {
     siap: kondisi === "ok" || kondisi === "belum_dicek" || kondisi === "sibuk" || kondisi === "timeout" || kondisi === "gagal",
     token: { ada: adaAkses, sumber: tok.sumber, samaran: tok.token ? samarkan(tok.token) : null, rusak: tok.rusak },
     pemakaian: { hariIni: pakai, batas },
+    langganan,
+    tahanSampai: tersimpan.tahanSampai && new Date(tersimpan.tahanSampai) > now ? jamReset(new Date(tersimpan.tahanSampai).getTime() / 1000, now) : null,
     sejak: tersimpan.sejak,
     terakhirOk: tersimpan.terakhirOk,
     terakhirCoba: tersimpan.terakhirCoba,
@@ -189,9 +261,19 @@ export async function panggilAI(db: Db, r: PermintaanAI): Promise<HasilClaude> {
   }
 
   const st = await bacaStatus(db);
+  if (!r.paksa && st.status === "limit" && st.tahanSampai && r.now < new Date(st.tahanSampai)) {
+    return gagal("limit", `Kena batas langganan Claude, reset ${jamReset(new Date(st.tahanSampai).getTime() / 1000, r.now)}.`);
+  }
   const tahan = TAHAN_MS[st.status];
-  if (!r.paksa && tahan && st.terakhirCoba && r.now.getTime() - new Date(st.terakhirCoba).getTime() < tahan) {
+  if (!r.paksa && !(st.status === "limit" && st.tahanSampai) && tahan && st.terakhirCoba && r.now.getTime() - new Date(st.terakhirCoba).getTime() < tahan) {
     return gagal(st.status as AlasanGagal, st.pesan);
+  }
+
+  // Hemat otomatis: kalau sesi 5 jam / mingguan langganan hampir habis, tugas kecil tidak memakai Claude
+  // supaya sisanya tetap ada buat pemilik (di bot maupun claude.ai).
+  if (r.fitur === "kategori" || r.fitur === "review") {
+    const hampir = (await batasClaude(db, r.now)).find((j) => (j.kode === "five_hour" && j.persen >= 90) || (j.kode !== "five_hour" && j.persen >= 95));
+    if (hampir) return gagal("limit", `${hampir.label} sudah ${Math.round(hampir.persen)}%, tugas kecil dihemat.`);
   }
 
   const model = await getSetting(db, r.ringan ? "ai_model_ringan" : "ai_model");
@@ -209,6 +291,7 @@ export async function panggilAI(db: Db, r: PermintaanAI): Promise<HasilClaude> {
       catatan: hasil.ok ? null : hasil.pesan.slice(0, 300),
     },
   });
+  if (hasil.batas) await simpanBatas(db, hasil.batas, r.now);
   await catatKondisi(db, st, hasil, r.now);
   return hasil;
 }
@@ -216,17 +299,20 @@ export async function panggilAI(db: Db, r: PermintaanAI): Promise<HasilClaude> {
 async function catatKondisi(db: Db, lama: StatusTersimpan, h: HasilClaude, now: Date) {
   const baru: KondisiAI = h.ok ? "ok" : (h.alasan as KondisiAI);
   const iso = now.toISOString();
+  const reset = !h.ok && baru === "limit" ? (h.batas?.resetsAt ?? null) : null;
+  const tahanSampai = reset && reset * 1000 > now.getTime() ? new Date(reset * 1000).toISOString() : null;
   await simpanStatus(db, {
     status: baru,
     pesan: h.ok ? "" : h.pesan,
     sejak: baru === lama.status ? lama.sejak : iso,
     terakhirCoba: iso,
     terakhirOk: h.ok ? iso : lama.terakhirOk,
+    tahanSampai,
   });
 
   const pemilik = await recipientsFor(db, "pemilik");
   if (!h.ok && DIKABARI.includes(baru) && baru !== lama.status) {
-    const isi = KABAR[baru as keyof typeof KABAR];
+    const isi = baru === "limit" && tahanSampai ? KABAR.limit.replace("setelah batasnya reset", `setelah batasnya reset (${jamReset(reset!, now)})`) : KABAR[baru as keyof typeof KABAR];
     for (const nomor of pemilik) await enqueue(db, { nomor, jenis: "ai_status", isi, kunci: `ai:${baru}:${wibDate(now)}:${nomor}` }, now);
   }
   if (h.ok && DIKABARI.includes(lama.status)) {
@@ -259,7 +345,8 @@ export async function cekPulihAI(db: Db, now: Date): Promise<boolean> {
   if ((await getSetting(db, "ai_aktif")) !== "1") return false;
   const st = await bacaStatus(db);
   if (!DIKABARI.includes(st.status)) return false;
-  const tahan = TAHAN_MS[st.status] ?? 0;
+  if (st.tahanSampai && now < new Date(st.tahanSampai)) return false;
+  const tahan = st.tahanSampai ? 0 : (TAHAN_MS[st.status] ?? 0);
   if (st.terakhirCoba && now.getTime() - new Date(st.terakhirCoba).getTime() < tahan) return false;
   const h = await panggilAI(db, { fitur: "cek", system: "Balas persis satu kata: siap", prompt: "tes", ringan: true, now, timeoutMs: 60_000 });
   return h.ok;
