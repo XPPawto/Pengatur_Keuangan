@@ -10,6 +10,9 @@ import { getCurrentPeriod, getPeriodAllocations, listPlans } from "@/lib/service
 import { fmtRentang, fmtTanggalPanjang } from "@/lib/time";
 import { ENVELOPE_KODE, type EnvelopeKode } from "@/lib/types";
 import { pindahAmplop, simpanAlokasi, simpanPengaturanAmplop, simpanRencana } from "../actions-keuangan";
+import { koreksiPemasukan } from "../actions-plus";
+import RekonForm from "@/components/RekonForm";
+import { riwayatRekonsiliasi, saldoSistem } from "@/lib/services/reconcile";
 
 export const metadata = { title: "Amplop & anggaran" };
 
@@ -18,6 +21,7 @@ const JENIS: Record<string, string> = { daily: "Harian", fixed: "Tetap", sinking
 export default async function AmplopPage() {
   const now = new Date();
   const period = await getCurrentPeriod(prisma);
+  const [sistem, rekonLalu] = await Promise.all([saldoSistem(prisma), riwayatRekonsiliasi(prisma, 5)]);
   const [envs, balances, goal, plans, alloc, bill] = await Promise.all([
     listEnvelopes(prisma),
     getBalances(prisma, period?.id ?? null),
@@ -35,8 +39,8 @@ export default async function AmplopPage() {
 
       {period && alloc && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Stat icon="wallet" label="Pemasukan minggu ini" value={rp(period.pemasukan)} />
-          <Stat icon="grid" label="Total dialokasikan" value={rp(totalAlokasi)} tone={totalAlokasi > period.pemasukan ? "bad" : undefined} />
+          <Stat icon="wallet" label="Pemasukan minggu ini" value={rp(period.pemasukan + period.tambahan)} hint={period.tambahan ? `mingguan ${rp(period.pemasukan)} + tambahan ${rp(period.tambahan)}` : "uang mingguan"} />
+          <Stat icon="grid" label="Total dialokasikan" value={rp(totalAlokasi)} tone={totalAlokasi > period.pemasukan + period.tambahan ? "bad" : undefined} />
           <Stat icon="receipt" label="Terpakai minggu ini" value={rp(balances.filter((b) => !b.kumulatif).reduce((s, b) => s + b.terpakai, 0))} hint="Makan + Data" />
         </div>
       )}
@@ -123,6 +127,35 @@ export default async function AmplopPage() {
           )}
         </div>
       </div>
+
+      {period && (
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+          <Card title="Cocokkan dengan uang asli" icon="scale">
+            <RekonForm saldoSistem={sistem} />
+            {rekonLalu.length > 0 && (
+              <ul className="mt-4 divide-y divide-line border-t border-line text-xs">
+                {rekonLalu.map((r) => (
+                  <li key={r.id} className="flex justify-between gap-2 py-1.5">
+                    <span className="text-muted">{fmtTanggalPanjang(r.waktu.toISOString().slice(0, 10))}</span>
+                    <span className="num">
+                      {r.selisih === 0 ? "cocok" : `${r.selisih > 0 ? "+" : ""}${rp(r.selisih)}`} · {r.tindakan || "belum diselesaikan"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+          <Card title="Koreksi uang mingguan" icon="pencil">
+            <p className="mb-3 text-sm text-muted">Salah ketik nominal saat `masuk`? Selisihnya otomatis masuk/keluar dari Darurat, amplop lain tidak berubah.</p>
+            <ActionForm action={koreksiPemasukan} submit="Simpan koreksi" submitClass="btn-secondary">
+              <label htmlFor="koreksi-nominal" className="label">
+                Uang mingguan yang benar
+              </label>
+              <input id="koreksi-nominal" name="nominal" defaultValue={period.pemasukan} className="input num" />
+            </ActionForm>
+          </Card>
+        </div>
+      )}
 
       <Card title="Aturan amplop" icon="settings">
         <p className="mb-3 text-sm text-muted">

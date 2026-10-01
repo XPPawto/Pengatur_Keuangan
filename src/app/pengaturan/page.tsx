@@ -8,6 +8,7 @@ import { recentOutbox } from "@/lib/services/outbox";
 import { listRecipients, type Recipient } from "@/lib/services/recipients";
 import { getReminderSettings } from "@/lib/services/scheduler";
 import { getAllSettings } from "@/lib/services/settings";
+import { parseAturanBagi } from "@/lib/services/extra";
 import { wibDate, wibHM, fmtTanggal } from "@/lib/time";
 import { backupSekarang, hapusPenerima, kirimPesanTes, simpanPenerima, simpanPengingat, simpanUmum } from "../actions-lain";
 
@@ -121,6 +122,26 @@ export default async function PengaturanPage() {
               </label>
               <input id="batas_tahan" name="batas_tahan" defaultValue={umum.batas_tahan} className="input num" />
               <p className="hint">Pengeluaran Darurat di atas nominal ini ditawari tunda 24 jam dulu. Isi 0 untuk mematikan.</p>
+            </div>
+            <fieldset>
+              <legend className="label">Pembagian otomatis kiriman tambahan (%)</legend>
+              <div className="grid grid-cols-5 gap-2">
+                {(["makan", "data", "paylater", "kado", "darurat"] as const).map((k) => (
+                  <div key={k}>
+                    <label htmlFor={`bagi_${k}`} className="text-[11px] capitalize text-muted">
+                      {k}
+                    </label>
+                    <input id={`bagi_${k}`} name={`bagi_${k}`} type="number" min={0} max={100} defaultValue={parseAturanBagi(umum.bagi_ekstra)[k] ?? 0} className="input-sm num" />
+                  </div>
+                ))}
+              </div>
+              <p className="hint">Total harus 100. Dipakai untuk kiriman Ayah & uang tambahan lain (bisa dipilih manual per kiriman).</p>
+            </fieldset>
+            <div>
+              <label htmlFor="pengirim_default" className="label">
+                Pengirim default kiriman
+              </label>
+              <input id="pengirim_default" name="pengirim_default" defaultValue={umum.pengirim_default} className="input" />
             </div>
             <label className="flex items-start gap-2 text-sm">
               <input type="checkbox" name="otp_login" defaultChecked={umum.otp_login === "1"} className="mt-0.5 size-4 accent-[var(--brand)]" />

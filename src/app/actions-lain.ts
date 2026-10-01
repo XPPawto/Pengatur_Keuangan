@@ -169,6 +169,18 @@ export async function simpanUmum(_: FormState, form: FormData): Promise<FormStat
   await setSetting(prisma, "nama_pengguna", nama);
   await setSetting(prisma, "batas_tahan", String(batasN));
   await setSetting(prisma, "otp_login", form.get("otp_login") === "on" ? "1" : "0");
+  const bagi: string[] = [];
+  for (const k of ["makan", "data", "paylater", "kado", "darurat"]) {
+    const v = Number(form.get(`bagi_${k}`) || 0);
+    if (v > 0) bagi.push(`${k}:${v}`);
+  }
+  if (bagi.length) {
+    const total = bagi.reduce((a, b) => a + Number(b.split(":")[1]), 0);
+    if (total !== 100) return { error: `Persen pembagian kiriman harus total 100 (sekarang ${total}).` };
+    await setSetting(prisma, "bagi_ekstra", bagi.join(","));
+  }
+  const pengirim = String(form.get("pengirim_default") ?? "").trim();
+  if (pengirim) await setSetting(prisma, "pengirim_default", pengirim);
   done();
   return { ok: "Pengaturan tersimpan." };
 }

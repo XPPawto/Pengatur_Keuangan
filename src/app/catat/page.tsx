@@ -1,5 +1,6 @@
 import Link from "next/link";
 import CatatForm from "@/components/CatatForm";
+import StrukUpload from "@/components/StrukUpload";
 import { Icon } from "@/components/icons";
 import { Alert, Card, PageHeader } from "@/components/ui";
 import { prisma } from "@/lib/db";
@@ -59,6 +60,11 @@ export default async function CatatPage({ searchParams }: { searchParams: Promis
         awal={{ catatan: sp.catatan, nominal: sp.nominal, kode: sp.kode }}
         tanggal={{ hariIni, min: period?.tanggalMulai ?? hariIni }}
       />
+
+      <Card title="Foto struk" icon="camera">
+        <p className="mb-3 text-sm text-muted">Struk dibaca otomatis di perangkat sendiri (tanpa layanan luar). Bisa juga kirim foto struk ke bot WhatsApp.</p>
+        <StrukUpload />
+      </Card>
 
       <Card>
         <div className="flex items-center justify-between gap-3">

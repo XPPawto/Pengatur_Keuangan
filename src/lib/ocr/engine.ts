@@ -12,7 +12,7 @@ function siapkanBahasa() {
   for (const lang of ["ind", "eng"]) {
     const tujuan = path.join(LANG_DIR, `${lang}.traineddata.gz`);
     if (fs.existsSync(tujuan)) continue;
-    const sumber = require.resolve(`@tesseract.js-data/${lang}/4.0.0_best_int/${lang}.traineddata.gz`);
+    const sumber = path.join(process.cwd(), "node_modules", "@tesseract.js-data", lang, "4.0.0_best_int", `${lang}.traineddata.gz`);
     fs.copyFileSync(sumber, tujuan);
   }
 }

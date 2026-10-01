@@ -1,6 +1,6 @@
 {
   "name": "dompetkos",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "DompetKos: website + bot WhatsApp budget mingguan (sistem amplop)",
   "scripts": {

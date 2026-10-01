@@ -53,7 +53,18 @@ async function main() {
       if (acak() < 0.12) await kirim("sabun 8k", tgl, 19);
     }
     if (w === 1) await kirim("kuota 30k", minggu, 11);
+    if (w === 1) {
+      await kirim("ayah kirim 100k", addDays(minggu, 3), 16);
+      await kirim("ok", addDays(minggu, 3), 16);
+    }
+    if (w === 2) {
+      await kirim("pinjemin budi 20k", addDays(minggu, 1), 19);
+      await kirim("patungan galon 18k sama andi rafi", addDays(minggu, 2), 18);
+    }
   }
+  await kirim("andi bayar 6k", hariIni, 8);
+  await kirim("saldo asli 1jt", hariIni, 8);
+  await kirim("abaikan", hariIni, 8);
   await kirim("mau beli headset 60k", hariIni, 9);
   await kirim("1", hariIni, 9);
   console.log("Data demo siap.");
