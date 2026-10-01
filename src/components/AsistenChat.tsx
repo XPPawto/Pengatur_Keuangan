@@ -166,11 +166,14 @@ export default function AsistenChat({ riwayat, siap, pesanMati, opsi }: { riwaya
                   <TeksWA teks={m.isi} />
                 </div>
                 {m.penyedia && (m.dipilih || m.penyedia !== "claude") && !m.gagal && (
-                  <p className="flex items-center gap-1.5 text-xs text-muted">
-                    {m.penyedia === "claude" || m.penyedia === "gemini" || m.penyedia === "openrouter" ? <LogoPenyedia penyedia={m.penyedia} size={13} /> : <Icon name="transfer" size={13} />}
-                    Dijawab lewat {NAMA_PENYEDIA[m.penyedia] ?? m.penyedia}
-                    {m.model ? ` · ${m.model}` : ""}
-                    {m.dipilih ? "" : " (cadangan)"}
+                  <p className="flex items-start gap-1.5 text-xs text-muted">
+                    <span className="mt-px shrink-0">{m.penyedia === "claude" || m.penyedia === "gemini" || m.penyedia === "openrouter" ? <LogoPenyedia penyedia={m.penyedia} size={13} /> : <Icon name="transfer" size={13} />}</span>
+                    {/* nama model bisa panjang (mis. model OpenRouter): boleh terpatah supaya tidak keluar layar */}
+                    <span className="min-w-0 [overflow-wrap:anywhere]">
+                      Dijawab lewat {NAMA_PENYEDIA[m.penyedia] ?? m.penyedia}
+                      {m.model ? ` · ${m.model}` : ""}
+                      {m.dipilih ? "" : " (cadangan)"}
+                    </span>
                   </p>
                 )}
                 {m.memori?.map((x) => (
@@ -230,12 +233,13 @@ export default function AsistenChat({ riwayat, siap, pesanMati, opsi }: { riwaya
         </p>
       )}
       {opsi.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3 text-sm">
+        // HP: grid dua kolom (label | dropdown selebar sisa layar); layar lebar: sebaris dengan lebar maksimum
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border-t border-line pt-3 text-sm sm:flex sm:flex-wrap">
           <label htmlFor="pilih-penyedia" className="text-muted">
             Dijawab oleh
           </label>
-          <select id="pilih-penyedia" value={penyedia} onChange={(e) => simpanPilihan(e.target.value as "" | KodePenyedia, "")} className="input !min-h-9 !w-auto !py-1">
-            <option value="">Otomatis (Claude dulu, cadangan kalau error)</option>
+          <select id="pilih-penyedia" value={penyedia} onChange={(e) => simpanPilihan(e.target.value as "" | KodePenyedia, "")} className="input !min-h-9 w-full min-w-0 truncate !py-1 sm:!w-auto sm:max-w-[16rem]">
+            <option value="">Otomatis (Claude, lalu cadangan)</option>
             {opsi.map((o) => (
               <option key={o.kode} value={o.kode}>
                 {o.label}
@@ -244,11 +248,11 @@ export default function AsistenChat({ riwayat, siap, pesanMati, opsi }: { riwaya
           </select>
           {dipilih && (
             <>
-              <label htmlFor="pilih-model" className="sr-only">
+              <label htmlFor="pilih-model" className="text-muted sm:sr-only">
                 Model
               </label>
-              <select id="pilih-model" value={model} onChange={(e) => simpanPilihan(penyedia, e.target.value)} className="input !min-h-9 !w-auto max-w-full !py-1">
-                <option value="">Model bawaan ({dipilih.modelDefault})</option>
+              <select id="pilih-model" value={model} onChange={(e) => simpanPilihan(penyedia, e.target.value)} className="input !min-h-9 w-full min-w-0 truncate !py-1 sm:!w-auto sm:max-w-[20rem]">
+                <option value="">Bawaan · {dipilih.modelDefault}</option>
                 {dipilih.model.map((m) => (
                   <option key={m.v} value={m.v}>
                     {m.l}
