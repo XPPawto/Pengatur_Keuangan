@@ -12,6 +12,7 @@ interface Pesan {
   aksi?: AksiAI[];
   memori?: string[];
   gagal?: boolean;
+  penyedia?: string;
 }
 
 const NAMA: Record<string, string> = { makan: "Makan", data: "Paket data", paylater: "Paylater", kado: "Tabungan kado", darurat: "Darurat & kos" };
@@ -75,7 +76,7 @@ export default function AsistenChat({ riwayat, siap, pesanMati }: { riwayat: Pes
     startMikir(async () => {
       try {
         const r = await tanyaAsistenAction(t);
-        setPesan((p) => [...p, { peran: "asisten", isi: r.balasan, aksi: r.aksi, memori: r.memori, gagal: !r.ok }]);
+        setPesan((p) => [...p, { peran: "asisten", isi: r.balasan, aksi: r.aksi, memori: r.memori, gagal: !r.ok, penyedia: r.penyedia }]);
         setPilihan(r.aksi.map(() => true));
       } catch {
         setPesan((p) => [...p, { peran: "asisten", isi: "Gagal menghubungi server. Coba lagi.", gagal: true }]);
@@ -127,6 +128,12 @@ export default function AsistenChat({ riwayat, siap, pesanMati }: { riwayat: Pes
                 <div className={`rounded-2xl rounded-tl-md px-3.5 py-2.5 text-sm leading-relaxed ${m.gagal ? "bg-warn-bg text-warn" : "bg-subtle"}`}>
                   <TeksWA teks={m.isi} />
                 </div>
+                {m.penyedia && m.penyedia !== "claude" && (
+                  <p className="flex items-center gap-1.5 text-xs text-muted">
+                    <Icon name="transfer" size={13} />
+                    Dijawab lewat {m.penyedia === "gemini" ? "Gemini" : "OpenRouter"} (cadangan)
+                  </p>
+                )}
                 {m.memori?.map((x) => (
                   <p key={x} className="flex items-center gap-1.5 text-xs text-muted">
                     <Icon name="brain" size={13} />

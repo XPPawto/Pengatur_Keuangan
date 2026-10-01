@@ -558,7 +558,7 @@ describe("rekap Sabtu, koneksi, kesehatan", () => {
 
   it("kesehatan sistem: AI opsional, token ditolak = masalah", async () => {
     let h = await cekKesehatan(db, at("2026-10-05"));
-    expect(h.cek.find((c) => c.kode === "ai")).toMatchObject({ status: "ok", detail: "Belum disambungkan (opsional)" });
+    expect(h.cek.find((c) => c.kode === "ai")).toMatchObject({ status: "ok", detail: "Claude belum disambungkan (opsional)" });
     await sambung();
     jawab = () => gagal("belum_login");
     await panggilAI(db, { fitur: "chat_web", system: "s", prompt: "p", now: at("2026-10-05") });

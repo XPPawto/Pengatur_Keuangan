@@ -111,8 +111,12 @@ export async function cekKesehatan(db: Db, now: Date) {
   cek.push({
     kode: "ai",
     nama: "Asisten AI (Claude)",
-    status: !ai.aktif || ai.kondisi === "belum_diatur" ? "ok" : ["belum_login", "tidak_ada"].includes(ai.kondisi) ? "masalah" : ["limit", "kuota", "sibuk", "timeout", "gagal"].includes(ai.kondisi) ? "peringatan" : "ok",
-    detail: !ai.aktif ? "Dimatikan" : ai.kondisi === "belum_diatur" ? "Belum disambungkan (opsional)" : `${ai.label} · ${ai.pemakaian.hariIni}/${ai.pemakaian.batas} pemakaian hari ini`,
+    // Claude bermasalah tapi cadangan siap = peringatan saja (asisten tetap jalan)
+    status: !ai.aktif || ai.kondisi === "belum_diatur" || ai.kondisi === "dimatikan" ? "ok" : ["belum_login", "tidak_ada"].includes(ai.kondisi) ? (ai.siap ? "peringatan" : "masalah") : ["limit", "kuota", "sibuk", "timeout", "gagal"].includes(ai.kondisi) ? "peringatan" : "ok",
+    detail: [
+      !ai.aktif ? "Dimatikan" : ai.kondisi === "belum_diatur" ? "Claude belum disambungkan (opsional)" : `Claude: ${ai.label} · ${ai.pemakaian.hariIni}/${ai.pemakaian.batas} pemakaian hari ini`,
+      ...ai.cadangan.filter((c) => c.aktif).map((c) => `cadangan ${c.label}: ${c.ada ? c.labelKondisi : "belum disambungkan"}`),
+    ].join(" · "),
   });
 
   const status: Status = cek.some((c) => c.status === "masalah") ? "masalah" : cek.some((c) => c.status === "peringatan") ? "peringatan" : "ok";

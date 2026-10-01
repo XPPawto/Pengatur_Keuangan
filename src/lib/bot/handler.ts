@@ -452,6 +452,7 @@ async function cmdTanya(db: Db, nomor: string, pertanyaan: string, now: Date): P
 async function balasAsisten(db: Db, nomor: string, r: Awaited<ReturnType<typeof tanyaAsisten>>, now: Date): Promise<string[]> {
   const baris = [r.balasan];
   if (r.memori.length) baris.push("", ...r.memori.map((m) => `(${m})`));
+  if (r.penyedia && r.penyedia !== "claude") baris.push("", `_(dijawab lewat ${r.penyedia === "gemini" ? "Gemini" : "OpenRouter"} karena Claude lagi nggak bisa dipakai)_`);
   if (r.aksi.length) {
     await setPending(db, nomor, { jenis: "ai", aksi: r.aksi }, now);
     baris.push("", teksUsulan(r.aksi));

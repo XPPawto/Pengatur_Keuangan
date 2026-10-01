@@ -38,6 +38,8 @@ export interface JawabanAsisten {
   /** memori yang barusan disimpan / dihapus */
   memori: string[];
   alasan?: AlasanGagal;
+  /** penyedia yang menjawab (claude / gemini / openrouter) */
+  penyedia?: string;
 }
 
 // ---------------------------------------------------------------- util
@@ -307,7 +309,7 @@ export async function tanyaAsisten(db: Db, p: { kanal: string; pesan: string; no
       { kanal: p.kanal, peran: "asisten", isi: aksi.length ? `${balasan}\n${aksi.map((a, i) => `[usulan ${i + 1}] ${ringkasAksi(a)}`).join("\n")}` : balasan, waktu: new Date(p.now.getTime() + 1) },
     ],
   });
-  return { ok: true, balasan, aksi, memori };
+  return { ok: true, balasan, aksi, memori, penyedia: h.penyedia };
 }
 
 // ---------------------------------------------------------------- foto

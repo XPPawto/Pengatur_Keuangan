@@ -373,6 +373,9 @@ model AiCall {
   id       Int      @id @default(autoincrement())
   waktu    DateTime @default(now())
   fitur    String
+  // penyedia: claude | gemini | openrouter. utama = percobaan pertama sebuah permintaan (dihitung kuota harian)
+  penyedia String   @default("claude")
+  utama    Boolean  @default(true)
   model    String
   status   String
   durasiMs Int      @default(0)

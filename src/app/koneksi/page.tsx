@@ -6,7 +6,9 @@ import { Alert, Badge, Card, PageHeader, Stat } from "@/components/ui";
 import { prisma } from "@/lib/db";
 import { LABEL_FITUR, LABEL_KONDISI, statusAI } from "@/lib/ai/panggil";
 import { dataKoneksi, ringkasanPemakaian } from "@/lib/services/koneksi";
-import { getSetting } from "@/lib/services/settings";
+import { getAllSettings, getSetting } from "@/lib/services/settings";
+import CadanganPanel from "@/components/CadanganPanel";
+import { daftarModelGratis } from "@/lib/ai/openrouter";
 import { fmtTanggal, wibDate, wibHM } from "@/lib/time";
 
 export const metadata = { title: "Koneksi" };
@@ -29,7 +31,14 @@ function jamMenit(d: Date) {
 
 export default async function KoneksiPage() {
   const now = new Date();
-  const [peta, st, model, u] = await Promise.all([dataKoneksi(prisma, now), statusAI(prisma, now), getSetting(prisma, "ai_model"), ringkasanPemakaian(prisma, now)]);
+  const [peta, st, model, u, setel, modelGratis] = await Promise.all([
+    dataKoneksi(prisma, now),
+    statusAI(prisma, now),
+    getSetting(prisma, "ai_model"),
+    ringkasanPemakaian(prisma, now),
+    getAllSettings(prisma),
+    daftarModelGratis().catch(() => null),
+  ]);
   const waOk = peta.wa.status === "terhubung" && peta.wa.botHidup;
 
   return (
@@ -70,8 +79,24 @@ export default async function KoneksiPage() {
         </section>
       </div>
 
+      <section id="cadangan" className="scroll-mt-20 space-y-3">
+        <h2 className="section-title">AI cadangan (kalau Claude nggak bisa dipakai)</h2>
+        <p className="text-sm text-muted">
+          Kalau Claude kena batas, tokennya ditolak, atau lagi error, asisten otomatis pindah ke cadangan sesuai urutan. Balasannya diberi tanda &quot;lewat Gemini/OpenRouter&quot;. Semua tetap gratis.
+        </p>
+        <CadanganPanel
+          cadangan={st.cadangan}
+          claudeAktif={setel.ai_claude_aktif === "1"}
+          urutan={setel.ai_urutan_cadangan}
+          modelGemini={setel.ai_gemini_model}
+          modelGeminiRingan={setel.ai_gemini_model_ringan}
+          modelOpenRouter={setel.ai_openrouter_model}
+          modelGratis={modelGratis}
+        />
+      </section>
+
       <section id="pemakaian" className="scroll-mt-20 space-y-3">
-        <h2 className="section-title">Pemakaian Claude</h2>
+        <h2 className="section-title">Pemakaian AI</h2>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           {(["five_hour", "seven_day"] as const).map((k) => {
             const j = st.langganan.find((x) => x.kode === k);
@@ -143,7 +168,7 @@ export default async function KoneksiPage() {
                   <tr>
                     <th>Waktu</th>
                     <th>Fitur</th>
-                    <th className="hidden sm:table-cell">Model</th>
+                    <th className="hidden sm:table-cell">Penyedia · model</th>
                     <th>Status</th>
                     <th className="hidden text-right sm:table-cell">Durasi</th>
                     <th className="text-right">Token</th>
@@ -156,7 +181,9 @@ export default async function KoneksiPage() {
                         {fmtTanggal(wibDate(c.waktu))} {jamMenit(c.waktu)}
                       </td>
                       <td className="whitespace-nowrap">{LABEL_FITUR[c.fitur as keyof typeof LABEL_FITUR] ?? c.fitur}</td>
-                      <td className="hidden sm:table-cell">{c.model}</td>
+                      <td className="hidden sm:table-cell">
+                        {c.penyedia === "claude" ? "Claude" : c.penyedia === "gemini" ? "Gemini" : "OpenRouter"} · {c.model}
+                      </td>
                       <td>
                         <span title={c.catatan ?? undefined}>
                           <Badge tone={c.status === "ok" ? "ok" : c.status === "sibuk" || c.status === "timeout" || c.status === "limit" ? "warn" : "bad"}>
