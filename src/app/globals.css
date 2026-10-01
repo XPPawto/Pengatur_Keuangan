@@ -201,10 +201,10 @@ body {
 @keyframes mikir {
   0%,
   100% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--claude) 45%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--warna-mikir, var(--claude)) 45%, transparent);
   }
   50% {
-    box-shadow: 0 0 0 7px color-mix(in srgb, var(--claude) 0%, transparent);
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--warna-mikir, var(--claude)) 0%, transparent);
   }
 }
 .mikir {

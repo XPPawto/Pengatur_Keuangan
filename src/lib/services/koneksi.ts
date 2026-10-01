@@ -20,7 +20,9 @@ export interface DataKoneksi {
   ai: {
     kondisi: string;
     label: string;
+    /** ada penyedia (Claude atau cadangan) yang bisa dipakai */
     siap: boolean;
+    claudeSiap: boolean;
     aktif: boolean;
     adaToken: boolean;
     model: string;
@@ -33,7 +35,8 @@ export interface DataKoneksi {
     cadangan: { penyedia: string; label: string; aktif: boolean; ada: boolean; siap: boolean; labelKondisi: string; model: string }[];
   };
   nomor: { pemilik: number; keluarga: number; labelKeluarga: string[] };
-  fitur: { kode: FiturAI; label: string; hariIni: number; aktif: boolean }[];
+  /** `per` = jumlah panggilan hari ini per penyedia (claude/gemini/openrouter) */
+  fitur: { kode: FiturAI; label: string; hariIni: number; per: Record<string, number>; aktif: boolean }[];
   pesanHariIni: { masuk: number; keluar: number };
   antrean: number;
 }
@@ -46,7 +49,7 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
     statusAI(db, now),
     listRecipients(db),
     getSetting(db, "ai_model"),
-    db.aiCall.groupBy({ by: ["fitur"], where: { waktu: { gte: awal } }, _count: { _all: true } }),
+    db.aiCall.groupBy({ by: ["fitur", "penyedia"], where: { waktu: { gte: awal } }, _count: { _all: true } }),
     db.messageLog.count({ where: { arah: "masuk", waktu: { gte: awal } } }),
     db.messageLog.count({ where: { arah: "keluar", waktu: { gte: awal } } }),
     db.outbox.count({ where: { status: "antri" } }),
@@ -64,6 +67,7 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
       kondisi: ai.kondisi,
       label: ai.label,
       siap: ai.siap,
+      claudeSiap: ai.claudeSiap,
       aktif: ai.aktif,
       adaToken: ai.token.ada,
       model,
@@ -81,7 +85,8 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
     fitur: FITUR_PETA.map((f, i) => ({
       kode: f.kode,
       label: LABEL_FITUR[f.kode],
-      hariIni: perFitur.find((x) => x.fitur === f.kode)?._count._all ?? 0,
+      hariIni: perFitur.filter((x) => x.fitur === f.kode).reduce((n, x) => n + x._count._all, 0),
+      per: Object.fromEntries(perFitur.filter((x) => x.fitur === f.kode).map((x) => [x.penyedia, x._count._all])),
       aktif: ai.aktif && saklar[i] === "1",
     })),
     pesanHariIni: { masuk, keluar },

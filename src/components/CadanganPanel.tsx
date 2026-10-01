@@ -2,6 +2,7 @@ import ActionForm from "./ActionForm";
 import ConfirmButton from "./ConfirmButton";
 import { Icon } from "./icons";
 import { Badge } from "./ui";
+import { LogoPenyedia } from "./LogoAI";
 import { hapusKunciCadanganAction, simpanCadanganAction, simpanKunciCadanganAction, tesCadanganAction } from "@/app/actions-ai";
 import type { statusCadangan } from "@/lib/ai/panggil";
 import type { ModelGratis } from "@/lib/ai/openrouter";
@@ -41,7 +42,7 @@ export default function CadanganPanel({
     <div className="space-y-5">
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div id="gemini" className="card card-pad scroll-mt-20">
-          <Judul c={g} ikon="sparkles" />
+          <Judul c={g} />
           <p className="mb-3 text-sm text-muted">
             Gratis, resmi dari Google. Pilih salah satu: API key dari Google AI Studio (paling gampang, cukup lewat website ini), atau login akun Google lewat Gemini CLI di server.
           </p>
@@ -62,7 +63,7 @@ export default function CadanganPanel({
         </div>
 
         <div id="openrouter" className="card card-pad scroll-mt-20">
-          <Judul c={o} ikon="transfer" />
+          <Judul c={o} />
           <p className="mb-3 text-sm text-muted">
             Hanya memakai <b>model gratis</b> (berakhiran <code>:free</code>); model berbayar ditolak sebelum dikirim, jadi tidak ada tagihan. Buat API key di <span className="font-medium">openrouter.ai/keys</span>.
           </p>
@@ -137,11 +138,11 @@ export default function CadanganPanel({
   );
 }
 
-function Judul({ c, ikon }: { c: Cadangan; ikon: "sparkles" | "transfer" }) {
+function Judul({ c }: { c: Cadangan }) {
   return (
     <div className="mb-2 flex items-center justify-between gap-2">
       <h3 className="flex items-center gap-2 text-[15px] font-semibold">
-        <Icon name={ikon} size={18} className="text-muted" />
+        <LogoPenyedia penyedia={c.penyedia} size={20} />
         {c.label}
       </h3>
       <Badge tone={nada(c)}>{!c.aktif ? "Nonaktif" : c.labelKondisi}</Badge>
