@@ -7,6 +7,7 @@ import { ownerNumbers } from "../src/lib/whitelist";
 import { jadwalkanPengingat, dalamJendela } from "../src/lib/services/scheduler";
 import { kirimAntrean } from "../src/lib/services/sender";
 import { backupDatabase, listBackups } from "../src/lib/services/backup";
+import { alarmKesehatan } from "../src/lib/services/health";
 import { wibWeekday } from "../src/lib/time";
 
 process.env.TZ = "Asia/Jakarta";
@@ -48,6 +49,17 @@ async function main() {
   void tickJadwal();
   const jadwalTimer = setInterval(() => void tickJadwal(), 60_000);
 
+  // Alarm kesehatan tiap 30 menit: backup terlambat, antrean macet, disk hampir penuh.
+  const tickSehat = async () => {
+    try {
+      const n = await alarmKesehatan(db, new Date());
+      if (n) log(`${n} peringatan sistem masuk antrean`);
+    } catch (e) {
+      log(`cek kesehatan error: ${e}`);
+    }
+  };
+  const sehatTimer = setInterval(() => void tickSehat(), 30 * 60_000);
+
   // Pengirim antrean (tiap 5 detik, hanya kalau WhatsApp terhubung).
   let sibuk = false;
   const kirimTimer = setInterval(async () => {
@@ -65,6 +77,7 @@ async function main() {
 
   const stop = async () => {
     clearInterval(jadwalTimer);
+    clearInterval(sehatTimer);
     clearInterval(kirimTimer);
     manager.stopPolling();
     await db.$disconnect();

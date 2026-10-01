@@ -110,7 +110,7 @@ export async function seedDatabase(db: PrismaClient, env: NodeJS.ProcessEnv = pr
     await db.allowedNumber.upsert({
       where: { nomor: n },
       update: {},
-      create: { nomor: n, label: "Orang tua", peran: "keluarga", terimaPengingat: false, terimaLaporan: true, terimaKonfirmasiUang: true },
+      create: { nomor: n, label: "Ayah", peran: "keluarga", terimaPengingat: false, terimaLaporan: true, terimaKonfirmasiUang: true },
     });
   }
 

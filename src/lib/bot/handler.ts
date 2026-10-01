@@ -1,21 +1,29 @@
 import type { Db } from "../db";
 import { rp } from "../money";
 import { AppError } from "../services/errors";
-import { mergeDictionary, DEFAULT_DICTIONARY, type CategoryDictionary } from "../parser/category";
+import { mergeDictionary, DEFAULT_DICTIONARY, detectCategory, type CategoryDictionary } from "../parser/category";
 import { parseMessage, type ExpenseItem, type ParsedMessage } from "../parser/message";
 import { getBalances } from "../services/envelopes";
 import { getDailyStatus, getStreak, markTanpaJajan } from "../services/daily";
-import { addBonus, cancelPendingPeriod, getCurrentPeriod, getPeriodAllocations, proposePeriod } from "../services/periods";
-import { deleteTransaction, lastTransaction, listTransactions, recordExpense, updateTransaction } from "../services/transactions";
+import { cancelPendingPeriod, getCurrentPeriod, proposePeriod, setPemasukan } from "../services/periods";
+import { lastTransaction, listTransactions, recordExpense, updateTransaction } from "../services/transactions";
 import { confirmPeriodAndNotify } from "../services/notify";
 import { nextPaylaterBill, payBill, billsWithReadiness } from "../services/bills";
 import { transferBetween } from "../services/transfers";
 import { analyzePurchase, createHold, decideHold, latestAskedHold } from "../services/holds";
 import { getGoalProgress } from "../services/goals";
-import { rekapMingguanText } from "../services/reports";
 import { getShoppingWeek } from "../services/shopping";
-import { getSettingNumber } from "../services/settings";
+import { getSetting, getSettingNumber } from "../services/settings";
 import { peranNomor } from "../services/recipients";
+import { logActivity, type Actor } from "../services/activity-log";
+import { lastUndoable, listActivities, undoActivity } from "../services/undo";
+import { catatKiriman, namaPengirim, ringkasBagian, usulanBagi, type Bagian } from "../services/extra";
+import { mulaiRekonsiliasi, selesaikanRekonsiliasi } from "../services/reconcile";
+import { deteksiPola, jalankanSaran, proyeksi, saranMingguan, simulasi, type SaranTransfer } from "../services/autopilot";
+import { getPrestasi, rekapLengkap, teksSkor } from "../services/game";
+import { bayarDebt, createDebt, patungan, ringkasanDebt } from "../services/debts";
+import { cekLonjakan } from "../services/prices";
+import { parseStruk, type HasilStruk } from "../ocr/struk";
 import { addDays, fmtTanggal, fmtTanggalPanjang, wibDate, wibHM } from "../time";
 import { ENVELOPE_KODE, KATA_BUKA_KUNCI, type EnvelopeKode } from "../types";
 import { normalizePhone } from "../whitelist";
@@ -36,6 +44,10 @@ export interface IncomingMessage {
   nomor: string;
   text: string;
   now: Date;
+  /** pemuat gambar kalau pesannya foto (struk) */
+  gambar?: () => Promise<Buffer>;
+  /** pembaca teks gambar (OCR); bisa diganti saat tes */
+  ocr?: (gambar: Buffer) => Promise<string>;
 }
 
 /** Pilihan amplop saat kategori tidak jelas (Tabungan kado & Paylater sengaja tidak ditawarkan). */
@@ -44,22 +56,30 @@ const PILIHAN_BONUS: EnvelopeKode[] = ["makan", "data", "paylater", "kado", "dar
 
 type Pending =
   | { jenis: "masuk"; periodId: number; result: Parameters<typeof usulanPeriode>[1] }
-  | { jenis: "bonus"; nominal: number }
-  | { jenis: "batal"; txId: number }
+  | { jenis: "kiriman"; dari: string; nominal: number; bagian: Bagian }
+  | { jenis: "undo"; id: number }
   | { jenis: "kategori"; items: ExpenseItem[]; raw: string; tanggal?: string }
   | { jenis: "tahan"; barang: string; nominal: number; raw: string }
   | { jenis: "pindah_kado"; dari: EnvelopeKode; ke: EnvelopeKode; nominal: number; alasan: string }
-  | { jenis: "pindah_alasan"; dari: EnvelopeKode; ke: EnvelopeKode; nominal: number };
+  | { jenis: "pindah_alasan"; dari: EnvelopeKode; ke: EnvelopeKode; nominal: number }
+  | { jenis: "struk"; hasil: HasilStruk; kode: EnvelopeKode }
+  | { jenis: "saran"; transfers: SaranTransfer[] }
+  | { jenis: "rekon"; recId: number; selisih: number };
 
 const PENDING_TTL_MS: Record<Pending["jenis"], number> = {
   masuk: 12 * 3600_000,
-  bonus: 2 * 3600_000,
-  batal: 30 * 60_000,
+  kiriman: 6 * 3600_000,
+  undo: 30 * 60_000,
   kategori: 30 * 60_000,
   tahan: 60 * 60_000,
   pindah_kado: 15 * 60_000,
   pindah_alasan: 15 * 60_000,
+  struk: 60 * 60_000,
+  saran: 12 * 3600_000,
+  rekon: 60 * 60_000,
 };
+
+const aktor = (nomor: string): Actor => ({ oleh: nomor, sumber: "wa" });
 
 async function loadDictionary(db: Db): Promise<CategoryDictionary> {
   const items = await db.shoppingItem.findMany({ where: { aktif: true } });
@@ -84,7 +104,7 @@ async function getPending(db: Db, nomor: string, now: Date): Promise<Pending | n
   return { ...(JSON.parse(row.payload) as object), jenis: row.jenis } as Pending;
 }
 
-async function setPending(db: Db, nomor: string, p: Pending, now: Date) {
+export async function setPending(db: Db, nomor: string, p: Pending, now: Date) {
   await db.pendingAction.deleteMany({ where: { nomor } });
   await db.pendingAction.create({
     data: { nomor, jenis: p.jenis, payload: JSON.stringify(p), kedaluwarsa: new Date(now.getTime() + PENDING_TTL_MS[p.jenis]) },
@@ -105,11 +125,13 @@ export async function handleMessage(db: Db, msg: IncomingMessage): Promise<strin
     await db.messageLog.create({ data: { arah: "masuk", nomor, isi: "[diabaikan: nomor tidak terdaftar]", waktu: now } });
     return [];
   }
-  await db.messageLog.create({ data: { arah: "masuk", nomor, isi: msg.text, waktu: now } });
+  await db.messageLog.create({ data: { arah: "masuk", nomor, isi: msg.gambar ? `[gambar] ${msg.text}` : msg.text, waktu: now } });
 
   let replies: string[];
   try {
-    replies = peran === "keluarga" ? await prosesKeluarga(db, msg.text, now) : await proses(db, nomor, msg.text, now);
+    if (peran === "keluarga") replies = await prosesKeluarga(db, nomor, msg.text, now);
+    else if (msg.gambar) replies = await prosesGambar(db, nomor, msg, now);
+    else replies = await proses(db, nomor, msg.text, now);
   } catch (e) {
     if (e instanceof AppError) replies = [e.code === "no_period" ? BELUM_ADA_PERIODE : e.message];
     else {
@@ -145,17 +167,23 @@ async function proses(db: Db, nomor: string, text: string, now: Date): Promise<s
     case "hari_ini":
       return cmdHariIni(db, now);
     case "nol":
-      return cmdNol(db, now);
+      return cmdNol(db, nomor, now);
     case "batal":
-      return cmdBatal(db, nomor, now);
+      return cmdUndo(db, nomor, now);
+    case "aktivitas":
+      return cmdAktivitas(db);
     case "ubah":
-      return cmdUbah(db, parsed.nominal, now);
+      return cmdUbah(db, nomor, parsed.nominal, now);
     case "masuk":
       return cmdMasuk(db, nomor, parsed.nominal, now);
+    case "koreksi_masuk":
+      return cmdKoreksiMasuk(db, nomor, parsed.nominal, now);
+    case "kiriman":
+      return cmdKiriman(db, nomor, parsed.dari, parsed.nominal, now);
     case "expense":
       return catat(db, nomor, parsed.items, text, now, parsed.kemarin ? addDays(wibDate(now), -1) : undefined);
     case "bayar_paylater":
-      return cmdBayarPaylater(db, parsed.nominal, text, now);
+      return cmdBayarPaylater(db, nomor, parsed.nominal, text, now);
     case "tagihan":
       return cmdTagihan(db, now);
     case "target":
@@ -171,15 +199,41 @@ async function proses(db: Db, nomor: string, text: string, now: Date): Promise<s
       return cmdBelanja(db, now);
     case "menu":
       return cmdMenu(db, now);
+    case "rekon":
+      return cmdRekon(db, nomor, parsed.nominal, now);
+    case "proyeksi":
+      return cmdProyeksi(db, now);
+    case "kalau_beli":
+      return cmdKalauBeli(db, parsed.barang, parsed.nominal, now);
+    case "kalau_masuk":
+      return cmdKalauMasuk(db, parsed.nominal, parsed.minggu, now);
+    case "saran":
+      return cmdSaran(db, nomor, now);
+    case "pola":
+      return cmdPola(db, now);
+    case "skor":
+      return [teksSkor(await getPrestasi(db, now))];
+    case "hutang_list":
+      return cmdHutang(db, now);
+    case "piutang_baru":
+    case "hutang_baru":
+      return cmdHutangBaru(db, nomor, parsed.type === "piutang_baru" ? "piutang" : "hutang", parsed.orang, parsed.nominal, now);
+    case "piutang_bayar":
+    case "hutang_bayar":
+      return cmdHutangBayar(db, nomor, parsed.type === "piutang_bayar" ? "piutang" : "hutang", parsed.orang, parsed.nominal, now);
+    case "patungan":
+      return cmdPatungan(db, nomor, parsed.barang, parsed.nominal, parsed.orang, now);
     case "beli":
     case "tidak": {
       const h = await latestAskedHold(db);
-      if (h) return putuskanTahan(db, h.id, parsed.type === "beli" ? "beli" : "batal", now);
+      if (h) return putuskanTahan(db, nomor, h.id, parsed.type === "beli" ? "beli" : "batal", now);
       return ["Nggak ada yang lagi nunggu konfirmasi. Ketik `bantuan` kalau butuh contoh."];
     }
     case "ok":
     case "pilihan":
     case "yakin_ambil":
+    case "rinci":
+    case "abaikan":
       return ["Nggak ada yang lagi nunggu konfirmasi. Ketik `bantuan` kalau butuh contoh."];
     default:
       return [/^[a-z\s]+$/i.test(text.trim()) ? `Nominalnya berapa? Contoh: \`${text.trim()} 5k\`` : TAK_PAHAM];
@@ -202,18 +256,28 @@ async function jawabPending(db: Db, nomor: string, p: Pending, parsed: ParsedMes
         return selesai(["Oke, uang masuk dibatalin. Balas `masuk <nominal>` kalau mau ulang."]);
       }
       return null;
-    case "bonus":
-      if (parsed.type === "ok") return terapkanBonus(db, nomor, p.nominal, null);
-      if (parsed.type === "pilihan" && parsed.n <= PILIHAN_BONUS.length) return terapkanBonus(db, nomor, p.nominal, PILIHAN_BONUS[parsed.n - 1]);
-      if (batalin) return selesai(["Oke, uang ekstra nggak dicatat."]);
-      return null;
-    case "batal":
+    case "kiriman": {
+      let bagian: Bagian | null = null;
+      if (parsed.type === "ok") bagian = p.bagian;
+      else if (parsed.type === "pilihan" && parsed.n <= PILIHAN_BONUS.length) bagian = { [PILIHAN_BONUS[parsed.n - 1]]: p.nominal };
+      else if (batalin) return selesai([`Oke, kiriman ${p.dari} nggak dicatat.`]);
+      if (!bagian) return null;
+      await clearPending(db, nomor);
+      const r = await catatKiriman(db, { dari: p.dari, nominal: p.nominal, bagian, actor: aktor(nomor), now });
+      const baris = [`Kiriman ${p.dari} ${rp(p.nominal)} tercatat: ${ringkasBagian(r.bagian)}.`];
+      const keluarga = await db.outbox.count({ where: { kunci: { startsWith: `kiriman:${r.kiriman.id}:` } } });
+      if (keluarga) baris.push(`Tanda terima udah gw kirim ke ${p.dari === "Ayah" || p.dari === "Ibu" ? p.dari : "keluarga"}.`);
+      const d = await getDailyStatus(db, now);
+      if (d && r.bagian.makan) baris.push(statusJatah(d));
+      return baris;
+    }
+    case "undo":
       if (parsed.type === "ok") {
         await clearPending(db, nomor);
-        const tx = await deleteTransaction(db, p.txId, now).catch(() => null);
-        return [tx ? `Kehapus: ${tx.catatan || "(tanpa catatan)"} ${rp(tx.nominal)}.` : "Catatan itu udah nggak ada."];
+        const log = await undoActivity(db, p.id, aktor(nomor), now);
+        return [`Dibatalkan: ${log.ringkasan}.`];
       }
-      if (batalin) return selesai(["Oke, nggak jadi dihapus."]);
+      if (batalin) return selesai(["Oke, nggak jadi dibatalin."]);
       return null;
     case "kategori":
       if (parsed.type === "pilihan" && parsed.n <= PILIHAN_KATEGORI.length) return lanjutKategori(db, nomor, p, PILIHAN_KATEGORI[parsed.n - 1], now);
@@ -222,23 +286,24 @@ async function jawabPending(db: Db, nomor: string, p: Pending, parsed: ParsedMes
     case "tahan":
       if (parsed.type === "ok" || (parsed.type === "pilihan" && parsed.n === 1)) {
         const h = await createHold(db, { barang: p.barang, nominal: p.nominal, nomor, now });
+        await logActivity(db, aktor(nomor), "tahan_belanja", `Tahan beli ${p.barang} ${rp(p.nominal)} 24 jam`, { now });
         const { jam, menit } = wibHM(h.tanyaUlangPada);
         return selesai([`Sip, ditahan dulu. Besok jam ${String(jam).padStart(2, "0")}.${String(menit).padStart(2, "0")} gw tanya lagi masih mau atau nggak.`]);
       }
       if ((parsed.type === "pilihan" && parsed.n === 2) || parsed.type === "beli") {
         await clearPending(db, nomor);
-        return simpanItems(db, [{ nama: p.barang, nominal: p.nominal, assumedThousand: false, kode: "darurat" }], p.raw, now);
+        return simpanItems(db, nomor, [{ nama: p.barang, nominal: p.nominal, assumedThousand: false, kode: "darurat" }], p.raw, now);
       }
       if ((parsed.type === "pilihan" && parsed.n === 3) || batalin) {
         const h = await createHold(db, { barang: p.barang, nominal: p.nominal, nomor, now });
-        await decideHold(db, h.id, "batal", now, "wa");
+        await decideHold(db, h.id, "batal", now, "wa", aktor(nomor));
         return selesai([`Mantap, ${rp(p.nominal)} diselamatkan. Tercatat di rekap hemat.`]);
       }
       return null;
     case "pindah_kado":
       if (parsed.type === "yakin_ambil") {
         await clearPending(db, nomor);
-        return jalankanPindah(db, p.dari, p.ke, p.nominal, p.alasan, now, KATA_BUKA_KUNCI);
+        return jalankanPindah(db, nomor, p.dari, p.ke, p.nominal, p.alasan, now, KATA_BUKA_KUNCI);
       }
       if (batalin) return selesai(["Aman, tabungan kado nggak disentuh."]);
       if (parsed.type === "ok") return [`Harus ketik persis: ${KATA_BUKA_KUNCI}`];
@@ -250,7 +315,75 @@ async function jawabPending(db: Db, nomor: string, p: Pending, parsed: ParsedMes
       await clearPending(db, nomor);
       return mulaiPindah(db, nomor, p.dari, p.ke, p.nominal, alasan, now);
     }
+    case "struk": {
+      if (batalin) return selesai(["Oke, struk nggak dicatat."]);
+      let kode: EnvelopeKode | null = null;
+      if (parsed.type === "ok") kode = p.kode;
+      else if (parsed.type === "pilihan" && parsed.n <= PILIHAN_KATEGORI.length) kode = PILIHAN_KATEGORI[parsed.n - 1];
+      if (kode && p.hasil.total) {
+        await clearPending(db, nomor);
+        const nama = `Belanja ${p.hasil.toko ?? "struk"}`.trim();
+        return simpanItems(db, nomor, [{ nama, nominal: p.hasil.total, assumedThousand: false, kode }], "[struk]", now);
+      }
+      if (parsed.type === "rinci" && p.hasil.items.length) {
+        await clearPending(db, nomor);
+        const items: ExpenseItem[] = p.hasil.items.map((i) => ({ nama: i.nama, nominal: i.harga, assumedThousand: false, kode: detectCategory(i.nama) ?? p.kode }));
+        return simpanItems(db, nomor, items, "[struk]", now);
+      }
+      return null;
+    }
+    case "saran":
+      if (parsed.type === "ok") {
+        await clearPending(db, nomor);
+        const n = await jalankanSaran(db, p.transfers, aktor(nomor), now);
+        const d = await getDailyStatus(db, now);
+        return [`${n} saran dijalankan. Ketik \`batal\` kalau mau dibalikin.${d ? `\n${statusJatah(d)}` : ""}`];
+      }
+      if (batalin) return selesai(["Oke, saran diabaikan."]);
+      return null;
+    case "rekon": {
+      if (parsed.type === "abaikan" || batalin) {
+        await selesaikanRekonsiliasi(db, p.recId, "abaikan", aktor(nomor), now);
+        return selesai(["Oke, selisihnya diabaikan (tetap tercatat di riwayat)."]);
+      }
+      if (p.selisih > 0 && parsed.type === "ok") {
+        await selesaikanRekonsiliasi(db, p.recId, "uang_ekstra", aktor(nomor), now);
+        return selesai([`Sip, kelebihan ${rp(p.selisih)} masuk Darurat. Sekarang catatan cocok sama dompet.`]);
+      }
+      if (p.selisih < 0 && parsed.type === "pilihan" && parsed.n <= PILIHAN_KATEGORI.length) {
+        const kode = PILIHAN_KATEGORI[parsed.n - 1];
+        await selesaikanRekonsiliasi(db, p.recId, { catatKe: kode }, aktor(nomor), now);
+        return selesai([`Sip, ${rp(-p.selisih)} dicatat sebagai pengeluaran ${NAMA_PENDEK[kode]} yang kelewat. Sekarang catatan cocok sama dompet.`]);
+      }
+      return null;
+    }
   }
+}
+
+// ---------------------------------------------------------------- foto struk
+
+async function prosesGambar(db: Db, nomor: string, msg: IncomingMessage, now: Date): Promise<string[]> {
+  if (!(await getCurrentPeriod(db))) return [BELUM_ADA_PERIODE];
+  const ocr = msg.ocr ?? (await import("../ocr/engine")).bacaTeksGambar;
+  let teks = "";
+  try {
+    teks = await ocr(await msg.gambar!());
+  } catch (e) {
+    console.error("[bot] OCR gagal:", e);
+  }
+  const hasil = parseStruk(teks);
+  if (!hasil.total) return ["Struknya nggak kebaca jelas. Coba foto lebih terang & lurus, atau ketik manual aja, mis. `belanja indomaret 27.5k`."];
+
+  const kategori = hasil.items.map((i) => detectCategory(i.nama)).filter(Boolean) as EnvelopeKode[];
+  const kode: EnvelopeKode = kategori.length ? (["makan", "data", "darurat"] as EnvelopeKode[]).sort((a, b) => kategori.filter((k) => k === b).length - kategori.filter((k) => k === a).length)[0] : "makan";
+  await setPending(db, nomor, { jenis: "struk", hasil, kode }, now);
+  const baris = [`*Struk ${hasil.toko ?? ""}* terbaca: total ${rp(hasil.total)}${hasil.sumberTotal === "jumlah_item" ? " (dijumlah dari item)" : ""}.`];
+  for (const i of hasil.items.slice(0, 12)) baris.push(`• ${i.nama} ${rp(i.harga)}`);
+  if (hasil.items.length > 12) baris.push(`• … ${hasil.items.length - 12} item lagi`);
+  baris.push("", `Balas "ok" buat catat ${rp(hasil.total)} ke ${NAMA_PENDEK[kode]}, angka buat pilih amplop lain:`, pilihanBernomor(PILIHAN_KATEGORI));
+  if (hasil.items.length > 1) baris.push(`Atau "rinci" buat catat per item (amplop ditebak per item).`);
+  baris.push(`"batal" kalau salah baca.`);
+  return [baris.join("\n")];
 }
 
 // ---------------------------------------------------------------- cek
@@ -268,8 +401,8 @@ async function cmdHariIni(db: Db, now: Date): Promise<string[]> {
   return [hariIniList(tanggal, rows.reverse())];
 }
 
-async function cmdNol(db: Db, now: Date): Promise<string[]> {
-  await markTanpaJajan(db, now);
+async function cmdNol(db: Db, nomor: string, now: Date): Promise<string[]> {
+  await markTanpaJajan(db, now, aktor(nomor));
   const streak = await getStreak(db, now);
   return [`Oke, hari ini dicatat nggak jajan. Streak disiplin ${streak} hari.`];
 }
@@ -277,7 +410,7 @@ async function cmdNol(db: Db, now: Date): Promise<string[]> {
 async function cmdRekap(db: Db, now: Date): Promise<string[]> {
   const period = await getCurrentPeriod(db);
   if (!period) return [BELUM_ADA_PERIODE];
-  return [(await rekapMingguanText(db, period.id, now)) ?? BELUM_ADA_PERIODE];
+  return [(await rekapLengkap(db, period.id, now)) ?? BELUM_ADA_PERIODE];
 }
 
 async function cmdTarget(db: Db, now: Date): Promise<string[]> {
@@ -330,20 +463,35 @@ async function cmdMenu(db: Db, now: Date): Promise<string[]> {
   return [baris.join("\n")];
 }
 
-// ---------------------------------------------------------------- ubah data
-
-async function cmdBatal(db: Db, nomor: string, now: Date): Promise<string[]> {
-  const tx = await lastTransaction(db);
-  if (!tx) return ["Belum ada catatan yang bisa dibatalin."];
-  await setPending(db, nomor, { jenis: "batal", txId: tx.id }, now);
-  return [`Hapus catatan terakhir: ${tx.catatan || "(tanpa catatan)"} ${rp(tx.nominal)} [${NAMA_PENDEK[tx.envelope.kode as EnvelopeKode]}], ${fmtTanggal(tx.tanggal)}?\nBalas "ok" buat hapus, atau "batal".`];
+async function cmdAktivitas(db: Db): Promise<string[]> {
+  const rows = await listActivities(db, { take: 8 });
+  if (!rows.length) return ["Belum ada aktivitas."];
+  const baris = ["*Aktivitas terakhir*"];
+  for (const r of rows) {
+    const { jam, menit } = wibHM(r.waktu);
+    const siapa = r.oleh === "web" ? "web" : r.oleh === "sistem" ? "sistem" : `…${r.oleh.slice(-4)}`;
+    baris.push(`• ${fmtTanggal(wibDate(r.waktu))} ${String(jam).padStart(2, "0")}.${String(menit).padStart(2, "0")} (${siapa}) ${r.ringkasan}${r.dibatalkanPada ? " [dibatalkan]" : ""}`);
+  }
+  baris.push("", "Ketik `batal` buat membatalkan aksi terakhir. Riwayat lengkap ada di website (menu Aktivitas).");
+  return [baris.join("\n")];
 }
 
-async function cmdUbah(db: Db, nominal: number | null, now: Date): Promise<string[]> {
+// ---------------------------------------------------------------- ubah data
+
+async function cmdUndo(db: Db, nomor: string, now: Date): Promise<string[]> {
+  const log = await lastUndoable(db);
+  if (!log) return ["Belum ada aksi yang bisa dibatalin."];
+  await setPending(db, nomor, { jenis: "undo", id: log.id }, now);
+  const { jam, menit } = wibHM(log.waktu);
+  const siapa = log.oleh === nomor ? "lo" : log.oleh === "web" ? "website" : `nomor …${log.oleh.slice(-4)}`;
+  return [`Batalkan aksi terakhir?\n${log.ringkasan}\n(${fmtTanggal(wibDate(log.waktu))} ${String(jam).padStart(2, "0")}.${String(menit).padStart(2, "0")}, oleh ${siapa})\nBalas "ok" buat batalin, atau "batal".`];
+}
+
+async function cmdUbah(db: Db, nomor: string, nominal: number | null, now: Date): Promise<string[]> {
   if (!nominal) return ["Nominal barunya berapa? Contoh: `ubah 12k`."];
   const tx = await lastTransaction(db);
   if (!tx) return ["Belum ada catatan yang bisa diubah."];
-  await updateTransaction(db, tx.id, { nominal }, now);
+  await updateTransaction(db, tx.id, { nominal }, now, aktor(nomor));
   return [`Catatan terakhir (${tx.catatan || "tanpa catatan"}) diubah ${rp(tx.nominal)} → ${rp(nominal)}.`];
 }
 
@@ -355,55 +503,66 @@ async function cmdMasuk(db: Db, nomor: string, nominal: number | null, now: Date
     return [usulanPeriode(period, result)];
   } catch (e) {
     if (e instanceof AppError && e.code === "period_exists") {
-      await setPending(db, nomor, { jenis: "bonus", nominal }, now);
-      return [`Periode minggu ini udah jalan, jadi ${rp(nominal)} ini gw anggap uang ekstra.\nDefault: 50% Tabungan kado, 50% Darurat — balas "ok". Atau pilih satu amplop:\n${pilihanBernomor(PILIHAN_BONUS)}\nBalas angkanya, atau "batal".`];
+      return tawarkanKiriman(db, nomor, "Lainnya", nominal, now, `Periode minggu ini udah jalan, jadi ${rp(nominal)} ini gw anggap uang tambahan. (Kalau dari Ayah, bisa ketik \`ayah kirim ${Math.round(nominal / 1000)}k\` biar tercatat dari Ayah.)`);
     }
     throw e;
   }
+}
+
+async function cmdKoreksiMasuk(db: Db, nomor: string, nominal: number | null, now: Date): Promise<string[]> {
+  if (!nominal) return ["Nominal yang benar berapa? Contoh: `koreksi masuk 300`."];
+  const period = await getCurrentPeriod(db);
+  if (!period) return [BELUM_ADA_PERIODE];
+  const { selisih } = await setPemasukan(db, period.id, nominal, now, aktor(nomor));
+  if (!selisih) return [`Uang mingguan udah ${rp(nominal)}, nggak ada yang diubah.`];
+  return [`Uang mingguan dikoreksi jadi ${rp(nominal)}. Selisih ${rp(Math.abs(selisih))} ${selisih > 0 ? "ditambahkan ke" : "diambil dari"} Darurat. Ketik \`batal\` kalau salah.`];
+}
+
+async function cmdKiriman(db: Db, nomor: string, dariRaw: string | null, nominal: number | null, now: Date): Promise<string[]> {
+  const dari = namaPengirim(dariRaw, await getSetting(db, "pengirim_default"));
+  if (!nominal) return [`Berapa kiriman dari ${dari}? Contoh: \`${dari.toLowerCase()} kirim 100k\`.`];
+  return tawarkanKiriman(db, nomor, dari, nominal, now);
+}
+
+async function tawarkanKiriman(db: Db, nomor: string, dari: string, nominal: number, now: Date, pembuka?: string): Promise<string[]> {
+  if (!(await getCurrentPeriod(db))) return ["Belum ada periode aktif. Catat uang mingguan dulu (`masuk 300`), baru kiriman tambahan."];
+  const bagian = await usulanBagi(db, nominal);
+  await setPending(db, nomor, { jenis: "kiriman", dari, nominal, bagian }, now);
+  return [
+    [
+      pembuka ?? `Kiriman ${dari} ${rp(nominal)} masuk, alhamdulillah.`,
+      `Usulan pembagian: ${ringkasBagian(bagian)}.`,
+      `Balas "ok", atau pilih satu amplop:`,
+      pilihanBernomor(PILIHAN_BONUS),
+      `"batal" kalau nggak jadi.`,
+    ].join("\n"),
+  ];
 }
 
 async function konfirmasiMasuk(db: Db, nomor: string, periodId: number, now: Date): Promise<string[]> {
   await clearPending(db, nomor);
   let hasil: Awaited<ReturnType<typeof confirmPeriodAndNotify>>;
   try {
-    hasil = await confirmPeriodAndNotify(db, periodId, now);
+    hasil = await confirmPeriodAndNotify(db, periodId, now, aktor(nomor));
   } catch (e) {
     if (e instanceof AppError && e.code === "not_found") return ["Usulan itu udah dikonfirmasi atau dibatalin (mungkin dari website). Cek `sisa`."];
     throw e;
   }
-  const { period, sisaMakanPindah } = hasil;
+  const { period, sisaMakanPindah, sisaDataPindah } = hasil;
   const daily = await getDailyStatus(db, now);
   const baris = [`Sip, periode ${fmtTanggal(period.tanggalMulai)}–${fmtTanggal(period.tanggalSelesai)} resmi jalan.`];
   if (sisaMakanPindah > 0) baris.push(`Sisa makan minggu lalu ${rp(sisaMakanPindah)} udah pindah ke Darurat.`);
+  if (sisaDataPindah > 0) baris.push(`Sisa paket data minggu lalu ${rp(sisaDataPindah)} juga pindah ke Darurat.`);
   if (daily) baris.push(statusJatah(daily));
   const bill = await nextPaylaterBill(db);
   if (bill && bill.jatuhTempo <= addDays(wibDate(now), 3)) baris.push(`Ingat: ${bill.nama} ${rp(bill.nominal)} jatuh tempo ${fmtTanggal(bill.jatuhTempo)}. Kalau udah bayar, balas \`bayar paylater\`.`);
   return [baris.join("\n")];
 }
 
-async function terapkanBonus(db: Db, nomor: string, nominal: number, kode: EnvelopeKode | null): Promise<string[]> {
-  const period = await getCurrentPeriod(db);
-  if (!period) return [BELUM_ADA_PERIODE];
-  let bagian: Partial<Record<EnvelopeKode, number>>;
-  if (kode) bagian = { [kode]: nominal };
-  else {
-    const alloc = await getPeriodAllocations(db, period.id);
-    const keKado = alloc.kado > 0 ? Math.floor(nominal / 2) : 0;
-    bagian = { kado: keKado, darurat: nominal - keKado };
-  }
-  await addBonus(db, period.id, bagian);
-  await clearPending(db, nomor);
-  const ket = (Object.entries(bagian) as [EnvelopeKode, number][])
-    .filter(([, n]) => n)
-    .map(([k, n]) => `${NAMA_PENDEK[k]} +${rp(n)}`)
-    .join(", ");
-  return [`Uang ekstra ${rp(nominal)} masuk: ${ket}.`];
-}
-
-async function cmdBayarPaylater(db: Db, nominal: number | null, raw: string, now: Date): Promise<string[]> {
+async function cmdBayarPaylater(db: Db, nomor: string, nominal: number | null, raw: string, now: Date): Promise<string[]> {
   const bill = await nextPaylaterBill(db, nominal);
   if (!bill) return ["Nggak ada tagihan paylater yang belum lunas. Tambah tagihan baru di website (menu Tagihan)."];
-  const r = await payBill(db, bill.id, { nominal: nominal ?? undefined, now, sumber: "wa", pesanAsli: raw });
+  const r = await payBill(db, bill.id, { nominal: nominal ?? undefined, now, sumber: "wa", pesanAsli: raw, actor: aktor(nomor) });
   const baris = [`Lunas: ${bill.nama} ${fmtTanggal(bill.jatuhTempo)} dibayar ${rp(r.dibayar)}.`];
   if (nominal && nominal !== bill.nominal) baris.push(`(Perkiraan tadinya ${rp(bill.nominal)}, udah gw sesuaikan.)`);
   if (r.saldoSetelah !== null) baris.push(r.saldoSetelah >= 0 ? `Sisa amplop Paylater ${rp(r.saldoSetelah)}.` : `Amplop Paylater minus ${rp(-r.saldoSetelah)}. Tutup pakai \`pindah ${Math.ceil(-r.saldoSetelah / 1000)}k darurat ke paylater alasan nutup tagihan\`.`);
@@ -411,6 +570,107 @@ async function cmdBayarPaylater(db: Db, nominal: number | null, raw: string, now
   const next = await nextPaylaterBill(db);
   if (next) baris.push(`Tagihan berikutnya: ${rp(next.nominal)} tanggal ${fmtTanggal(next.jatuhTempo)}${next.tanggalPasti ? "" : " (perkiraan)"}.`);
   return [baris.join("\n")];
+}
+
+// ---------------------------------------------------------------- rekonsiliasi
+
+async function cmdRekon(db: Db, nomor: string, nominal: number | null, now: Date): Promise<string[]> {
+  if (nominal === null) return ["Total uang asli lo (dompet + semua e-wallet) berapa? Contoh: `saldo asli 412k`."];
+  const rec = await mulaiRekonsiliasi(db, nominal, aktor(nomor), now);
+  if (rec.selisih === 0) return [`Cocok persis! Catatan ${rp(rec.saldoSistem)} = uang asli ${rp(rec.saldoAsli)}. Pembukuan lo rapi.`];
+  await setPending(db, nomor, { jenis: "rekon", recId: rec.id, selisih: rec.selisih }, now);
+  if (rec.selisih < 0) {
+    return [`Menurut catatan harusnya ada ${rp(rec.saldoSistem)}, uang asli ${rp(rec.saldoAsli)}.\nAda ${rp(-rec.selisih)} yang kepake tapi belum dicatat. Catat ke amplop mana?\n${pilihanBernomor(PILIHAN_KATEGORI)}\nAtau "abaikan".`];
+  }
+  return [`Menurut catatan harusnya ada ${rp(rec.saldoSistem)}, uang asli ${rp(rec.saldoAsli)}.\nAda lebih ${rp(rec.selisih)} (kiriman/pemasukan yang belum dicatat?). Balas "ok" buat masukin ke Darurat, atau "abaikan".`];
+}
+
+// ---------------------------------------------------------------- autopilot
+
+async function cmdProyeksi(db: Db, now: Date): Promise<string[]> {
+  if (!(await getCurrentPeriod(db))) return [BELUM_ADA_PERIODE];
+  const p = await proyeksi(db, now, { minggu: 6 });
+  const baris = [`*Proyeksi ${p.minggu.length} minggu* (rata-rata makan ${rp(p.rata.makan)}/minggu${p.rata.sampel ? `, dari ${p.rata.sampel} minggu terakhir` : ", perkiraan awal"})`];
+  for (const m of p.minggu) {
+    const t = m.tagihan.length ? ` · tagihan ${m.tagihan.map((x) => `${rp(x.nominal)}${x.kurang ? ` (kurang ${rp(x.kurang)})` : ""}`).join(", ")}` : "";
+    baris.push(`${fmtTanggal(m.mulai)}: kado ${rp(m.kado)} · darurat ${rp(m.darurat)} · paylater ${rp(m.paylater)}${t}`);
+  }
+  if (p.kadoSaatTenggat !== null) baris.push("", `Tabungan kado saat tenggat: ${rp(p.kadoSaatTenggat)}.`);
+  if (p.risiko.length) baris.push("", "*Risiko*", ...p.risiko.map((r) => `• ${r}`));
+  else baris.push("Nggak ada risiko besar. Aman.");
+  baris.push("", "Coba juga: `kalau beli sepatu 150k`, `kalau masuk 250 3 minggu`, `saran`.");
+  return [baris.join("\n")];
+}
+
+async function cmdKalauBeli(db: Db, barang: string, nominal: number | null, now: Date): Promise<string[]> {
+  if (!nominal) return [`Harganya berapa? Contoh: \`kalau beli ${barang} 150k\`.`];
+  if (!(await getCurrentPeriod(db))) return [BELUM_ADA_PERIODE];
+  const s = await simulasi(db, now, { belanja: { nominal, barang } });
+  const i = await analyzePurchase(db, nominal, now);
+  return [[`*Kalau beli ${barang} ${rp(nominal)}*`, `Setara ${String(i.hariMakan).replace(".", ",")} hari jatah makan.`, ...s.poin.map((p) => `• ${p}`), "", s.aman ? "Kesimpulan: masih aman." : "Kesimpulan: berisiko. Pertimbangkan `mau beli` biar ditahan 24 jam dulu."].join("\n")];
+}
+
+async function cmdKalauMasuk(db: Db, nominal: number | null, minggu: number, now: Date): Promise<string[]> {
+  if (!nominal) return ["Contoh: `kalau masuk 250 3 minggu`."];
+  if (!(await getCurrentPeriod(db))) return [BELUM_ADA_PERIODE];
+  const s = await simulasi(db, now, { pemasukan: { nominal, jumlahMinggu: minggu } });
+  return [[`*Kalau uang mingguan cuma ${rp(nominal)} selama ${minggu} minggu*`, ...s.poin.map((p) => `• ${p}`), "", s.aman ? "Kesimpulan: masih aman." : "Kesimpulan: berisiko. Siapkan cadangan atau kurangi pengeluaran Darurat."].join("\n")];
+}
+
+async function cmdSaran(db: Db, nomor: string, now: Date): Promise<string[]> {
+  if (!(await getCurrentPeriod(db))) return [BELUM_ADA_PERIODE];
+  const saran = await saranMingguan(db, now);
+  if (!saran.length) return ["Nggak ada saran minggu ini. Semua di jalur yang benar."];
+  const transfers = saran.filter((s) => s.transfer).map((s) => s.transfer!);
+  const baris = ["*Saran autopilot*"];
+  saran.forEach((s, i) => baris.push(`${i + 1}. *${s.judul}* — ${s.detail}`));
+  if (transfers.length) {
+    await setPending(db, nomor, { jenis: "saran", transfers }, now);
+    baris.push("", `Balas "ok" buat jalankan ${transfers.length} pemindahan sekaligus (bisa di-\`batal\` nanti).`);
+  }
+  return [baris.join("\n")];
+}
+
+async function cmdPola(db: Db, now: Date): Promise<string[]> {
+  const pola = await deteksiPola(db, now);
+  if (!pola.length) return ["Datanya belum cukup buat baca pola. Catat terus 1–2 minggu lagi ya."];
+  return [["*Pola pengeluaran lo*", ...pola.map((p) => `• *${p.judul}*: ${p.detail}`)].join("\n")];
+}
+
+// ---------------------------------------------------------------- hutang-piutang
+
+async function cmdHutang(db: Db, now: Date): Promise<string[]> {
+  const r = await ringkasanDebt(db, now);
+  if (!r.rows.length) return ["Nggak ada utang-piutang yang aktif."];
+  const baris = ["*Utang-piutang aktif*"];
+  for (const d of r.rows) {
+    baris.push(`• ${d.arah === "piutang" ? `${d.orang} utang ke lo` : `Lo utang ke ${d.orang}`} ${rp(d.sisa)}${d.sisa !== d.nominal ? ` (dari ${rp(d.nominal)})` : ""}${d.catatan ? ` — ${d.catatan}` : ""}, ${d.umurHari} hari`);
+  }
+  baris.push("", `Total uang lo di orang lain ${rp(r.piutang)} · utang lo ${rp(r.hutang)}.`);
+  return [baris.join("\n")];
+}
+
+async function cmdHutangBaru(db: Db, nomor: string, arah: "piutang" | "hutang", orang: string, nominal: number | null, now: Date): Promise<string[]> {
+  if (!nominal) return [arah === "piutang" ? `Berapa? Contoh: \`pinjemin ${orang} 20k\`.` : `Berapa? Contoh: \`pinjem ke ${orang} 20k\`.`];
+  const d = await createDebt(db, { orang, arah, nominal, actor: aktor(nomor), now });
+  const r = await ringkasanDebt(db, now);
+  return [
+    arah === "piutang"
+      ? `Dicatat: ${d.orang} pinjem ${rp(nominal)} (diambil dari Darurat). Total uang lo di orang lain ${rp(r.piutang)}.\nKalau dia bayar, ketik \`${d.orang.toLowerCase()} bayar ${Math.round(nominal / 1000)}k\`.`
+      : `Dicatat: lo pinjem ${rp(nominal)} ke ${d.orang} (masuk Darurat). Total utang lo ${rp(r.hutang)}.\nKalau udah bayar, ketik \`bayar utang ${d.orang.toLowerCase()}\`.`,
+  ];
+}
+
+async function cmdHutangBayar(db: Db, nomor: string, arah: "piutang" | "hutang", orang: string, nominal: number | null, now: Date): Promise<string[]> {
+  const r = await bayarDebt(db, { orang, arah, nominal, actor: aktor(nomor), now });
+  if (arah === "piutang") return [`${r.debt.orang} bayar ${rp(r.dibayar)}, masuk ke Darurat.${r.lunas ? " Lunas!" : ` Sisa utangnya ${rp(r.sisa)}.`}`];
+  return [`Bayar utang ke ${r.debt.orang} ${rp(r.dibayar)} dicatat (dari Darurat).${r.lunas ? " Lunas!" : ` Sisa utang lo ${rp(r.sisa)}.`}`];
+}
+
+async function cmdPatungan(db: Db, nomor: string, barang: string, nominal: number | null, orang: string[], now: Date): Promise<string[]> {
+  if (!nominal) return ["Contoh: `patungan galon 18k sama budi andi`."];
+  const r = await patungan(db, { barang, total: nominal, orang, actor: aktor(nomor), now });
+  return [`Patungan ${barang} ${rp(nominal)} dibagi ${r.orang.length + 1}: bagian lo ${rp(r.bagianSendiri)} (dicatat ke ${NAMA_PENDEK[r.kode]}), ${r.orang.join(", ")} masing-masing utang ${rp(r.bagianTeman)} ke lo.`];
 }
 
 // ---------------------------------------------------------------- pindah amplop
@@ -432,11 +692,11 @@ async function mulaiPindah(db: Db, nomor: string, dari: EnvelopeKode, ke: Envelo
     await setPending(db, nomor, { jenis: "pindah_kado", dari, ke, nominal, alasan }, now);
     return [`${env.nama} itu terkunci buat kado. Kalau diambil ${rp(nominal)}, target mundur segitu.\nKetik *${KATA_BUKA_KUNCI}* buat lanjut, atau "batal".`];
   }
-  return jalankanPindah(db, dari, ke, nominal, alasan, now);
+  return jalankanPindah(db, nomor, dari, ke, nominal, alasan, now);
 }
 
-async function jalankanPindah(db: Db, dari: EnvelopeKode, ke: EnvelopeKode, nominal: number, alasan: string, now: Date, konfirmasi?: string): Promise<string[]> {
-  const r = await transferBetween(db, { dari, ke, nominal, alasan, now, sumber: "wa", konfirmasiBukaKunci: konfirmasi });
+async function jalankanPindah(db: Db, nomor: string, dari: EnvelopeKode, ke: EnvelopeKode, nominal: number, alasan: string, now: Date, konfirmasi?: string): Promise<string[]> {
+  const r = await transferBetween(db, { dari, ke, nominal, alasan, now, sumber: "wa", konfirmasiBukaKunci: konfirmasi, actor: aktor(nomor) });
   const baris = [`Pindah ${rp(nominal)}: ${r.namaDari} → ${r.namaKe} (${alasan}).`, `${NAMA_PENDEK[dari]} ${rp(r.saldoDari)} · ${NAMA_PENDEK[ke]} ${rp(r.saldoKe)}.`];
   if (ke === "makan") {
     const d = await getDailyStatus(db, now);
@@ -463,8 +723,8 @@ async function tawarkanTahan(db: Db, nomor: string, barang: string, nominal: num
   return [baris.join("\n")];
 }
 
-async function putuskanTahan(db: Db, id: number, keputusan: "beli" | "batal", now: Date): Promise<string[]> {
-  const { hold, saldoSetelah } = await decideHold(db, id, keputusan, now, "wa");
+async function putuskanTahan(db: Db, nomor: string, id: number, keputusan: "beli" | "batal", now: Date): Promise<string[]> {
+  const { hold, saldoSetelah } = await decideHold(db, id, keputusan, now, "wa", aktor(nomor));
   if (keputusan === "batal") return [`Mantap! ${hold.barang} nggak jadi dibeli, ${rp(hold.nominal)} diselamatkan.`];
   return [`Oke, ${hold.barang} ${rp(hold.nominal)} dicatat ke Darurat. Sisa Darurat ${rp(saldoSetelah ?? 0)}.`];
 }
@@ -485,7 +745,7 @@ async function simpanAtauTahan(db: Db, nomor: string, items: ExpenseItem[], raw:
     const batas = await getSettingNumber(db, "batas_tahan");
     if (batas > 0 && items[0].nominal >= batas) return tawarkanTahan(db, nomor, items[0].nama, items[0].nominal, raw, now);
   }
-  return simpanItems(db, items, raw, now, tanggal);
+  return simpanItems(db, nomor, items, raw, now, tanggal);
 }
 
 function pertanyaanKategori(items: ExpenseItem[]): string {
@@ -504,13 +764,17 @@ async function lanjutKategori(db: Db, nomor: string, p: Extract<Pending, { jenis
   return simpanAtauTahan(db, nomor, items, p.raw, now, p.tanggal);
 }
 
-async function simpanItems(db: Db, items: ExpenseItem[], raw: string, now: Date, tanggal?: string): Promise<string[]> {
-  const saved: { item: ExpenseItem; kode: EnvelopeKode; melewati: boolean }[] = [];
+async function simpanItems(db: Db, nomor: string, items: ExpenseItem[], raw: string, now: Date, tanggal?: string): Promise<string[]> {
+  const saved: { item: ExpenseItem; kode: EnvelopeKode; melewati: boolean; id: number }[] = [];
   for (const item of items) {
     const kode = item.kode as EnvelopeKode;
-    const r = await recordExpense(db, { kode, nominal: item.nominal, catatan: item.nama, sumber: "wa", pesanAsli: raw, now, tanggal });
-    saved.push({ item, kode, melewati: r.melewatiBatas20 });
+    const r = await recordExpense(db, { kode, nominal: item.nominal, catatan: item.nama, sumber: "wa", pesanAsli: raw, now, tanggal, log: false });
+    saved.push({ item, kode, melewati: r.melewatiBatas20, id: r.id });
   }
+  await logActivity(db, aktor(nomor), "catat", `Catat ${saved.map((s) => `${s.item.nama} ${rp(s.item.nominal)}`).join(", ")}`, {
+    undo: { t: "hapus_tx", ids: saved.map((s) => s.id) },
+    now,
+  });
 
   const period = await getCurrentPeriod(db);
   const balances = await getBalances(db, period!.id);
@@ -540,6 +804,11 @@ async function simpanItems(db: Db, items: ExpenseItem[], raw: string, now: Date,
       const b = balances.find((x) => x.kode === kode)!;
       baris.push(`Peringatan: ${NAMA_PENDEK[kode]} tinggal ${rp(b.saldo)}, udah di bawah 20% jatah minggu ini.`);
     }
+  }
+
+  for (const s of saved) {
+    const l = await cekLonjakan(db, s.item.nama, s.item.nominal, now, s.id);
+    if (l) baris.push(`Catatan harga: ${s.item.nama} ${rp(s.item.nominal)}, ${l.persen}% di atas biasanya (${rp(l.biasanya)}).`);
   }
 
   const asumsi = saved.filter((s) => s.item.assumedThousand).map((s) => `${s.item.nominal / 1000} → ${rp(s.item.nominal)}`);

@@ -134,13 +134,18 @@ export class BaileysDriver implements GatewayDriver {
       for (const m of messages) {
         const jid = m.key.remoteJid ?? "";
         if (m.key.fromMe || !jid || jid.endsWith("@g.us") || jid === "status@broadcast") continue;
-        const text = m.message?.conversation ?? m.message?.extendedTextMessage?.text;
-        if (!text) continue;
+        const img = m.message?.imageMessage;
+        const text = m.message?.conversation ?? m.message?.extendedTextMessage?.text ?? img?.caption ?? "";
+        if (!text && !img) continue;
+        const gambar = img
+          ? async () =>
+              (await baileys.downloadMediaMessage(m, "buffer", {}, { logger: pino({ level: "silent" }), reuploadRequest: sock.updateMediaMessage })) as Buffer
+          : undefined;
         // JID berbentuk @lid: pakai nomor asli kalau tersedia
         const pnJid = jid.endsWith("@lid") ? (m.key as { remoteJidAlt?: string }).remoteJidAlt : jid;
         if (!pnJid) continue;
         const waktu = m.messageTimestamp ? new Date(Number(m.messageTimestamp) * 1000) : new Date();
-        for (const h of this.msgHandlers) void Promise.resolve(h({ nomor: normalizePhone(pnJid), text, waktu })).catch(() => {});
+        for (const h of this.msgHandlers) void Promise.resolve(h({ nomor: normalizePhone(pnJid), text, waktu, gambar })).catch(() => {});
       }
     });
   }

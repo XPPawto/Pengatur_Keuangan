@@ -63,7 +63,7 @@ describe("uang masuk", () => {
   it("masuk lagi di minggu yang sama = uang ekstra, default 50% kado / 50% darurat", async () => {
     await mulaiPeriode4Okt();
     const [tanya] = await kirim("masuk 40", at("2026-10-06"));
-    expect(tanya).toContain("uang ekstra");
+    expect(tanya).toContain("uang tambahan");
     await kirim("ok", at("2026-10-06"));
     expect((await saldo("kado")).saldo).toBe(115000 + 20000);
     expect((await saldo("darurat")).saldo).toBe(20000 + 20000);

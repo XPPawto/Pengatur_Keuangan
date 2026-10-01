@@ -6,18 +6,20 @@ import { getBalances } from "./envelopes";
 import { enqueue } from "./outbox";
 import { getCurrentPeriod, getPendingPeriod } from "./periods";
 import { recipientsFor } from "./recipients";
-import { laporanKeluargaText, rekapMingguanText } from "./reports";
+import { laporanKeluargaLengkap, rekapLengkap } from "./game";
+import { saranMingguan } from "./autopilot";
 import { getSetting } from "./settings";
 import { unpaidBills } from "./bills";
 import { diffDays } from "../time";
 
-export type JenisPengingat = "uang_masuk" | "pagi" | "malam" | "tagihan" | "rekap" | "laporan_keluarga";
+export type JenisPengingat = "uang_masuk" | "pagi" | "malam" | "tagihan" | "saran" | "rekap" | "laporan_keluarga";
 
 export const PENGINGAT: { jenis: JenisPengingat; jam: string; label: string; keterangan: string }[] = [
   { jenis: "uang_masuk", jam: "09:00", label: "Uang masuk (Minggu)", keterangan: "Mulai jam ini, ulang tiap 3 jam sampai 21.00, berhenti setelah dikonfirmasi" },
   { jenis: "pagi", jam: "07:00", label: "Jatah pagi", keterangan: "Jatah makan hari ini, menu, dan tagihan 3 hari ke depan" },
   { jenis: "malam", jam: "21:00", label: "Cek catatan malam", keterangan: "Hanya kalau hari ini belum ada catatan" },
   { jenis: "tagihan", jam: "09:00", label: "Tagihan H-3 & H-1", keterangan: "Nominal, saldo amplop, cukup atau kurang" },
+  { jenis: "saran", jam: "19:00", label: "Saran autopilot (Sabtu)", keterangan: "Saran pindah uang untuk amankan tagihan & target, cukup balas ok" },
   { jenis: "rekap", jam: "20:00", label: "Rekap mingguan (Sabtu)", keterangan: "Total per amplop, streak, progres target" },
   { jenis: "laporan_keluarga", jam: "20:00", label: "Laporan keluarga (Sabtu)", keterangan: "Laporan sopan untuk nomor berperan keluarga" },
 ];
@@ -140,16 +142,33 @@ export async function jadwalkanPengingat(db: Db, now: Date): Promise<number> {
   // Sabtu: rekap pemilik & laporan keluarga
   if (hari === 6) {
     const period = await getCurrentPeriod(db);
+    const sr = on("saran");
+    if (period && sr.aktif && dalamJendela(now, sr.jam)) {
+      const saran = await saranMingguan(db, now);
+      const transfers = saran.filter((x) => x.transfer).map((x) => x.transfer!);
+      if (transfers.length) {
+        const isi = ["*Saran autopilot minggu ini*", ...saran.map((x, i) => `${i + 1}. *${x.judul}* — ${x.detail}`), "", `Balas "ok" buat jalankan ${transfers.length} pemindahan sekaligus.`].join("\n");
+        for (const nomor of pemilik) {
+          if (await enqueue(db, { nomor, jenis: "saran", isi, kunci: `saran:${period.id}:${nomor}` }, now)) {
+            total++;
+            await db.pendingAction.deleteMany({ where: { nomor } });
+            await db.pendingAction.create({
+              data: { nomor, jenis: "saran", payload: JSON.stringify({ jenis: "saran", transfers }), kedaluwarsa: new Date(now.getTime() + 12 * 3600_000) },
+            });
+          }
+        }
+      }
+    }
     const rk = on("rekap");
     if (period && rk.aktif && dalamJendela(now, rk.jam)) {
-      const isi = await rekapMingguanText(db, period.id, now);
+      const isi = await rekapLengkap(db, period.id, now);
       const penerima = await recipientsFor(db, "pemilik", "laporan");
       if (isi) total += await kirimKe(db, penerima, "rekap", isi, `rekap:${period.id}`, now);
     }
     const lk = on("laporan_keluarga");
     if (period && lk.aktif && dalamJendela(now, lk.jam)) {
       const nama = await getSetting(db, "nama_pengguna");
-      const isi = await laporanKeluargaText(db, period.id, now, nama);
+      const isi = await laporanKeluargaLengkap(db, period.id, now, nama);
       const keluarga = await recipientsFor(db, "keluarga", "laporan");
       if (isi) total += await kirimKe(db, keluarga, "laporan_keluarga", isi, `laporan_keluarga:${period.id}`, now);
     }
