@@ -17,10 +17,13 @@ import { jenisGambar, MAKS_GAMBAR } from "../keamanan/gambar";
 import { bangunKonteks } from "./konteks";
 import { LABEL_KONDISI, LABEL_PENYEDIA, panggilAI, type Penyedia } from "./panggil";
 import { SYSTEM_ASISTEN, SYSTEM_KATEGORI, SYSTEM_REVIEW, SYSTEM_STRUK } from "./prompt";
+import { cariRiwayat, hapusRiwayatDanIndeks, teksIngatan } from "./ingatan";
+import { AKTOR_SISTEM } from "../services/activity-log";
+import { getSetting } from "../services/settings";
+import { daftarMemori, RUANG_PEMILIK, terapkanOperasi, ubahMemori, type JenisMemori, type OperasiMemori } from "./memori";
 
 const NAMA: Record<EnvelopeKode, string> = { makan: "Makan", data: "Paket data", paylater: "Paylater", kado: "Tabungan kado", darurat: "Darurat & kos" };
 const AMPLOP_CATAT: EnvelopeKode[] = ["makan", "data", "darurat"];
-const MAKS_MEMORI = 40;
 const RIWAYAT_JAM = 6;
 const RIWAYAT_PESAN = 10;
 
@@ -224,16 +227,20 @@ export async function jalankanAksiAI(db: Db, aksi: AksiAI[], actor: Actor, now: 
 
 // ---------------------------------------------------------------- memori & kata
 
-export async function ingat(db: Db, isi: string, sumber: "pengguna" | "asisten" = "pengguna") {
-  const bersih = teks(isi, 200);
-  if (!bersih) throw new Error("Isi memorinya kosong.");
-  if ((await db.aiMemori.count()) >= MAKS_MEMORI) throw new Error(`Memori penuh (${MAKS_MEMORI}). Hapus yang lama dulu.`);
-  const ada = await db.aiMemori.findFirst({ where: { isi: bersih } });
-  return ada ?? db.aiMemori.create({ data: { isi: bersih, sumber } });
+/**
+ * Simpan satu hal ke memori pemilik (lewat mesin memori: batas karakter, duplikat, pemindai keamanan).
+ * Melempar Error dengan pesan yang bisa ditampilkan kalau ditolak. Entri yang sama persis dianggap sudah beres.
+ */
+export async function ingat(db: Db, isi: string, sumber: "pengguna" | "asisten" = "pengguna", jenis: JenisMemori = "catatan") {
+  const r = await ubahMemori(db, RUANG_PEMILIK, { aksi: "tambah", jenis, teks: isi }, sumber, new Date());
+  if (r.ok) return r.entri;
+  if (r.alasan === "duplikat" && r.mirip) return r.mirip;
+  throw new Error(r.pesan);
 }
 
+/** Hapus satu entri memori pemilik (hanya ruang pemilik; catatan grup & anggota tidak bisa dihapus lewat sini). */
 export async function lupakan(db: Db, id: number) {
-  const row = await db.aiMemori.findUnique({ where: { id } });
+  const row = await db.aiMemori.findFirst({ where: { id, ruang: RUANG_PEMILIK } });
   if (!row) return null;
   await db.aiMemori.delete({ where: { id } });
   return row;
@@ -246,6 +253,29 @@ export async function ajariKata(db: Db, kataMentah: string, amplop: EnvelopeKode
 }
 
 // ---------------------------------------------------------------- ngobrol
+
+/** {lupakan:<id>} (bentuk lama) → {hapus:"<isi entri>"}; entri yang tidak ada dibuang. */
+async function petakanLupakanLama(db: Db, mentah: unknown[]): Promise<unknown[]> {
+  if (!mentah.some((m) => (m as Record<string, unknown>)?.lupakan !== undefined)) return mentah;
+  const semua = await daftarMemori(db, RUANG_PEMILIK);
+  return mentah.flatMap((m) => {
+    const o = m as Record<string, unknown>;
+    if (o?.lupakan === undefined) return [m];
+    const e = semua.find((x) => x.id === Number(o.lupakan));
+    return e ? [{ hapus: e.isi, jenis: e.jenis }] : [];
+  });
+}
+
+/** Potongan obrolan lama yang relevan dengan pesan ini (di luar jendela riwayat prompt). Gagal = kosong, tidak pernah mengganggu jawaban. */
+async function ingatanLama(db: Db, kanal: string, pesan: string, now: Date): Promise<string> {
+  try {
+    if ((await getSetting(db, "memori_ingatan_obrolan")) !== "1") return "";
+    const potongan = await cariRiwayat(db, { query: pesan, lingkup: "pemilik", now, kecuali: { kanal, jam: RIWAYAT_JAM }, maks: 4 });
+    return teksIngatan(potongan, now);
+  } catch {
+    return "";
+  }
+}
 
 async function riwayat(db: Db, kanal: string, now: Date) {
   const rows = await db.aiChat.findMany({
@@ -263,7 +293,24 @@ export async function lagiNgobrol(db: Db, kanal: string, now: Date, menit = 10):
 }
 
 export async function hapusRiwayat(db: Db, kanal: string) {
-  await db.aiChat.deleteMany({ where: { kanal } });
+  await hapusRiwayatDanIndeks(db, kanal);
+}
+
+/** Ubah daftar "memori" dari jawaban model jadi operasi. Bentuk lama {ingat}/{lupakan:id} tetap dikenali. */
+function bacaMemoriAI(mentah: unknown): OperasiMemori[] {
+  if (!Array.isArray(mentah)) return [];
+  const ops: OperasiMemori[] = [];
+  const jenisDari = (v: unknown): JenisMemori | undefined => (v === "profil" || v === "catatan" ? v : undefined);
+  for (const m of mentah.slice(0, 5) as Record<string, unknown>[]) {
+    const jenis = jenisDari(m?.jenis);
+    if (typeof m?.tambah === "string") ops.push({ aksi: "tambah", jenis: jenis ?? "catatan", teks: m.tambah });
+    else if (typeof m?.ingat === "string") ops.push({ aksi: "tambah", jenis: jenis ?? "catatan", teks: m.ingat });
+    else if (m?.ganti && typeof m.ganti === "object") {
+      const g = m.ganti as Record<string, unknown>;
+      if (typeof g.lama === "string" && typeof g.teks === "string") ops.push({ aksi: "ganti", lama: g.lama, teks: g.teks, ...(jenis ? { jenis } : {}) });
+    } else if (typeof m?.hapus === "string") ops.push({ aksi: "hapus", lama: m.hapus, ...(jenis ? { jenis } : {}) });
+  }
+  return ops;
 }
 
 /**
@@ -272,12 +319,13 @@ export async function hapusRiwayat(db: Db, kanal: string) {
  */
 export async function tanyaAsisten(db: Db, p: { kanal: string; pesan: string; now: Date; penyedia?: Penyedia; model?: string }): Promise<JawabanAsisten> {
   const pesan = p.pesan.trim().slice(0, 2000);
-  const [konteks, lalu] = await Promise.all([bangunKonteks(db, p.now), riwayat(db, p.kanal, p.now)]);
+  const [konteks, lalu, lama] = await Promise.all([bangunKonteks(db, p.now), riwayat(db, p.kanal, p.now), ingatanLama(db, p.kanal, pesan, p.now)]);
   const prompt = [
     "<DATA>",
     konteks,
     "</DATA>",
     "",
+    lama ? `${lama}\n` : "",
     lalu.length ? ["# Percakapan sebelumnya", ...lalu.map((r) => `${r.peran === "user" ? "Pemilik" : "Asisten"}: ${r.isi}`), ""].join("\n") : "",
     "# Pesan baru dari pemilik",
     pesan,
@@ -298,16 +346,15 @@ export async function tanyaAsisten(db: Db, p: { kanal: string; pesan: string; no
 
   const memori: string[] = [];
   if (j && Array.isArray(j.memori)) {
-    for (const m of j.memori.slice(0, 5) as Record<string, unknown>[]) {
-      try {
-        if (typeof m?.ingat === "string") memori.push(`Diingat: ${(await ingat(db, m.ingat, "asisten")).isi}`);
-        else if (m?.lupakan !== undefined) {
-          const r = await lupakan(db, Number(m.lupakan));
-          if (r) memori.push(`Dilupakan: ${r.isi}`);
-        }
-      } catch {
-        /* memori penuh / tidak valid: abaikan */
-      }
+    try {
+      // bentuk lama {lupakan:<id>} dipetakan ke potongan teks entri itu supaya lewat jalur yang sama
+      const ops = bacaMemoriAI(await petakanLupakanLama(db, j.memori));
+      const r = await terapkanOperasi(db, RUANG_PEMILIK, ops, "asisten", p.now, AKTOR_SISTEM);
+      memori.push(...r.pesan);
+      // yang penuh / tidak aman dilaporkan; duplikat & salah sasaran diam saja (bukan hal yang perlu diributkan)
+      for (const d of r.ditolak) if (d.alasan === "penuh" || d.alasan === "tidak_aman") memori.push(`Tidak disimpan: ${d.pesan}`);
+    } catch {
+      /* memori tidak valid: abaikan, jawaban tetap dikirim */
     }
   }
 

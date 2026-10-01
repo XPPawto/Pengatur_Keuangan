@@ -59,7 +59,19 @@ export type Undo =
   | { t: "pemasukan"; periodId: number; pemasukanSebelum: number; alokasiSebelum: Record<string, number> }
   | { t: "batal_patungan"; txIds: number[]; debtIds: number[] }
   | { t: "jalankan_saran"; transferIds: number[] }
-  | { t: "hapus_belanja"; ids: number[] };
+  | { t: "hapus_belanja"; ids: number[] }
+  /** perubahan memori AI: hapus entri yang ditambahkan, kembalikan entri yang diganti / dihapus */
+  | { t: "memori"; hapus: number[]; pulihkan: SnapMemori[] };
+
+export interface SnapMemori {
+  id: number;
+  ruang: string;
+  jenis: string;
+  isi: string;
+  sumber: string;
+  dibuatPada: string;
+  diperbarui: string;
+}
 
 export function snapTx(t: {
   id: number;

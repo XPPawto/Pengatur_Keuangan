@@ -9,6 +9,7 @@ import { kirimAntrean } from "../src/lib/services/sender";
 import { backupDatabase, listBackups } from "../src/lib/services/backup";
 import { alarmKesehatan } from "../src/lib/services/health";
 import { cekPulihAI } from "../src/lib/ai/panggil";
+import { jalankanRefleksi } from "../src/lib/ai/refleksi";
 import { kunciBerkas } from "../src/lib/keamanan/berkas";
 import { wibWeekday } from "../src/lib/time";
 
@@ -61,8 +62,20 @@ async function main() {
       }
     }
   };
+  // Perenungan memori berjalan sendiri (bisa puluhan detik menunggu AI), jangan menahan jadwal pengingat.
+  const tickMemori = async () => {
+    try {
+      const r = await jalankanRefleksi(db, new Date());
+      if (r.jalan) log(`memori: ${r.pesan.length ? r.pesan.join(" | ") : (r.catatan ?? "tidak ada yang baru")}`);
+    } catch (e) {
+      log(`memori error: ${e}`);
+    }
+  };
   void tickJadwal();
-  const jadwalTimer = setInterval(() => void tickJadwal(), 60_000);
+  const jadwalTimer = setInterval(() => {
+    void tickJadwal();
+    void tickMemori();
+  }, 60_000);
 
   // Alarm kesehatan tiap 30 menit: backup terlambat, antrean macet, disk hampir penuh.
   const tickSehat = async () => {

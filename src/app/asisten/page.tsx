@@ -13,6 +13,7 @@ import { pesanAIMati } from "@/lib/ai/asisten";
 import { MODEL_CLAUDE, MODEL_GEMINI, MODEL_GROQ, denganAktif, type OpsiPenyedia } from "@/lib/ai/model";
 import { daftarModelGroqCache } from "@/lib/ai/groq";
 import { daftarModelGratis } from "@/lib/ai/openrouter";
+import { daftarMemori, JENIS_MEMORI, LABEL_JENIS, pemakaianMemori, RUANG_PEMILIK } from "@/lib/ai/memori";
 import { hapusKataAction, ingatAction, lupakanAction, simpanPengaturanAIAction } from "../actions-ai";
 
 export const metadata = { title: "Asisten AI" };
@@ -27,11 +28,12 @@ const MODEL = [
 
 export default async function AsistenPage() {
   const now = new Date();
-  const [st, s, chat, memori, kata, modelGratis] = await Promise.all([
+  const [st, s, chat, memori, pakaiMemori, kata, modelGratis] = await Promise.all([
     statusAI(prisma, now),
     getAllSettings(prisma),
     prisma.aiChat.findMany({ where: { kanal: "web", waktu: { gte: new Date(now.getTime() - 6 * 3600_000) } }, orderBy: { id: "desc" }, take: 20 }),
-    prisma.aiMemori.findMany({ orderBy: { id: "asc" } }),
+    daftarMemori(prisma, RUANG_PEMILIK),
+    pemakaianMemori(prisma, RUANG_PEMILIK),
     prisma.kataKategori.findMany({ orderBy: { dibuatPada: "desc" }, take: 30 }),
     daftarModelGratis().catch(() => []),
   ]);
@@ -146,24 +148,47 @@ export default async function AsistenPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <Card title="Memori asisten" icon="brain">
-          <p className="mb-3 text-sm text-muted">Hal yang selalu diingat asisten saat ngasih saran. Bisa ditambah dari WhatsApp: <code>ingat kado buat adik</code>.</p>
+        <Card
+          title="Memori asisten"
+          icon="brain"
+          action={
+            <Link href="/memori" className="btn-ghost btn-sm">
+              Peta memori<Icon name="chevron-right" size={15} />
+            </Link>
+          }
+        >
+          <p className="mb-3 text-sm text-muted">Hal yang selalu diingat asisten saat ngasih saran. Bisa ditambah dari WhatsApp: <code>ingat kado buat adik</code>. Asisten juga mencatat sendiri hal penting dari obrolan.</p>
           {memori.length ? (
-            <ul className="mb-3 divide-y divide-line">
-              {memori.map((m) => (
-                <li key={m.id} className="flex items-start gap-2 py-2">
-                  <span className="num w-6 shrink-0 pt-0.5 text-xs text-muted">{m.id}.</span>
-                  <p className="min-w-0 flex-1 text-sm">{m.isi}</p>
-                  <Badge tone={m.sumber === "asisten" ? "brand" : "neutral"}>{m.sumber === "asisten" ? "dari AI" : "lo"}</Badge>
-                  <form action={lupakanAction}>
-                    <input type="hidden" name="id" value={m.id} />
-                    <button className="btn-ghost btn-sm !px-2" aria-label={`Lupakan: ${m.isi}`}>
-                      <Icon name="trash" size={15} />
-                    </button>
-                  </form>
-                </li>
-              ))}
-            </ul>
+            <div className="mb-3 space-y-3">
+              {JENIS_MEMORI.map((j) => {
+                const e = memori.filter((m) => m.jenis === j);
+                const p = pakaiMemori.find((x) => x.jenis === j)!;
+                if (!e.length) return null;
+                return (
+                  <div key={j}>
+                    <p className="section-title mb-1 flex items-center justify-between">
+                      {LABEL_JENIS[j]}
+                      <span className="num normal-case tracking-normal">{p.pakai}/{p.batas}</span>
+                    </p>
+                    <ul className="divide-y divide-line">
+                      {e.map((m) => (
+                        <li key={m.id} className="flex items-start gap-2 py-2">
+                          <span className="num w-6 shrink-0 pt-0.5 text-xs text-muted">{m.id}.</span>
+                          <p className="min-w-0 flex-1 text-sm">{m.isi}</p>
+                          <Badge tone={m.sumber === "asisten" ? "brand" : "neutral"}>{m.sumber === "asisten" ? "dari AI" : "lo"}</Badge>
+                          <form action={lupakanAction}>
+                            <input type="hidden" name="id" value={m.id} />
+                            <button className="btn-ghost btn-sm !px-2" aria-label={`Lupakan: ${m.isi}`}>
+                              <Icon name="trash" size={15} />
+                            </button>
+                          </form>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
           ) : (
             <p className="mb-3 rounded-xl bg-subtle px-3 py-2 text-sm text-muted">Belum ada memori.</p>
           )}
@@ -171,7 +196,11 @@ export default async function AsistenPage() {
             <label htmlFor="isi-memori" className="sr-only">
               Memori baru
             </label>
-            <input id="isi-memori" name="isi" required maxLength={200} placeholder="mis. kado buat adik, ultahnya 20 Nov" className="input-sm min-w-0 flex-1" />
+            <select name="jenis" aria-label="Jenis memori" className="input-sm !w-auto" defaultValue="catatan">
+              <option value="profil">Profil</option>
+              <option value="catatan">Catatan</option>
+            </select>
+            <input id="isi-memori" name="isi" required maxLength={280} placeholder="mis. kado buat adik, ultahnya 20 Nov" className="input-sm min-w-0 flex-1" />
           </ActionForm>
         </Card>
 

@@ -24,6 +24,7 @@ const WARNA_FITUR: Record<string, string> = {
   chat_web: "var(--series-1)",
   chat_wa: "var(--series-2)",
   chat_grup: "var(--brand)",
+  memori: "var(--series-6)",
   struk: "var(--series-3)",
   review: "var(--series-4)",
   kategori: "var(--series-5)",

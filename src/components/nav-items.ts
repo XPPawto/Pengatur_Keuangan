@@ -14,7 +14,8 @@ export const NAV_GROUPS: { judul: string; items: NavItem[] }[] = [
       { href: "/", label: "Beranda", icon: "home", deskripsi: "Jatah makan, amplop, tagihan terdekat" },
       { href: "/catat", label: "Catat", icon: "plus-circle", deskripsi: "Catat pengeluaran cepat" },
       { href: "/riwayat", label: "Riwayat", icon: "receipt", deskripsi: "Semua transaksi per periode" },
-      { href: "/asisten", label: "Asisten AI", icon: "bot", deskripsi: "Tanya apa aja, rencana menu, review, memori" },
+      { href: "/asisten", label: "Asisten AI", icon: "bot", deskripsi: "Tanya apa aja, rencana menu, review" },
+      { href: "/memori", label: "Memori AI", icon: "brain", deskripsi: "Peta memori asisten, uji ingatan, linimasa" },
     ],
   },
   {
