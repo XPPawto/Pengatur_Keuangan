@@ -524,32 +524,8 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
           </button>
         </div>
       </div>
-      <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-        <Legenda warna="var(--ok)" alir label="WhatsApp tersambung" />
-        <Legenda warna={WARNA_PENYEDIA.claude} alir label="Claude tersambung" />
-        {d.ai.cadangan.map((c) =>
-          kondisiPenyedia(d, c.penyedia as IdPenyedia) === "tidak_ada" ? null : <Legenda key={c.penyedia} warna={WARNA_PENYEDIA[c.penyedia]} alir label={`${c.label} tersambung`} />,
-        )}
-        {d.grup.aktif && <Legenda warna={WARNA_PENYEDIA.gemini} kelas="garis-giliran-alir" label="AI grup: bergiliran antar penyedia (▶ = berikut, angka = jawaban hari ini)" />}
-        <Legenda warna="var(--line-strong)" label="Fitur bisa dijawab penyedia ini" />
-        <Legenda warna={WARNA_PENYEDIA.claude} label="Dipakai hari ini (warna penyedia)" op={0.75} />
-        <Legenda warna="var(--warn)" putus label="Menunggu / kena batas" />
-        <Legenda warna="var(--bad)" putus label="Terputus / error" />
-        <li className="hidden sm:block">Geser untuk pindah · Ctrl + scroll untuk zoom</li>
-      </ul>
       <AktivitasLive log={log} />
     </div>
-  );
-}
-
-function Legenda({ warna, label, alir, putus, op, kelas }: { warna: string; label: string; alir?: boolean; putus?: boolean; op?: number; kelas?: string }) {
-  return (
-    <li className="flex items-center gap-1.5">
-      <svg width="22" height="6" aria-hidden="true">
-        <line x1="1" y1="3" x2="21" y2="3" stroke={warna} strokeWidth={kelas ? 3 : 2} strokeDasharray={putus ? "4 3" : alir ? "6 3" : undefined} strokeOpacity={op ?? 1} className={kelas ?? (alir ? "garis-alir" : undefined)} />
-      </svg>
-      {label}
-    </li>
   );
 }
 
