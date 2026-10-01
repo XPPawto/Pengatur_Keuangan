@@ -147,6 +147,7 @@ export default async function KoneksiPage() {
           batas={Number(setel.grup_ai_batas_harian) || 0}
           perOrang={Number(setel.grup_ai_per_orang_menit) || 0}
           tanda={setel.grup_ai_tanda === "1"}
+          modelClaude={setel.grup_ai_model_claude}
           pakaiHariIni={pakaiGrup}
           penyedia={penyediaGrup.map((p) => LABEL_PENYEDIA[p])}
         />

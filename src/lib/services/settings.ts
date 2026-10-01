@@ -45,6 +45,8 @@ export const DEFAULT_SETTINGS = {
   grup_ai_per_orang_menit: "0",
   /** cetak nama penyedia & model di bawah jawaban */
   grup_ai_tanda: "1",
+  /** model Claude saat giliran Claude di grup: otomatis (haiku ringan / sonnet kuliah & koding / opus sangat berat), haiku, sonnet, opus, atau bawaan (ikut pengaturan Asisten) */
+  grup_ai_model_claude: "otomatis",
   /** hitungan internal untuk giliran penyedia (round robin) */
   grup_ai_putaran: "0",
   ai_openrouter_auto: "1",

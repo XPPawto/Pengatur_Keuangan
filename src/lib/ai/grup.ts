@@ -7,7 +7,7 @@ import { getSetting, getSettingNumber, setSetting } from "../services/settings";
 import { ownerNumbers } from "../whitelist";
 import type { IncomingWaMessage } from "../whatsapp/gateway";
 import { AI_WORK_DIR } from "./claude";
-import { getTokenAI, kunciCadangan, LABEL_PENYEDIA, panggilAI, type Penyedia } from "./panggil";
+import { batasClaude, getTokenAI, kunciCadangan, LABEL_PENYEDIA, panggilAI, type Penyedia } from "./panggil";
 
 /**
  * AI grup WhatsApp: bot yang sama jadi asisten AI umum untuk SATU grup.
@@ -128,6 +128,45 @@ export function bersihkanBalasan(teks: string, maks = 3000): string {
   return t.length > maks ? `${t.slice(0, maks - 1).trimEnd()}…` : t;
 }
 
+// ---------------------------------------------------------------- tingkat soal → model Claude
+
+export type TingkatSoal = "ringan" | "berat" | "sangat_berat";
+
+const RE_SANGAT_BERAT =
+  /\b(buktikan|pembuktian|turunkan rumus|derivasi|tesis|disertasi|riset|penelitian|arsitektur sistem|system design|desain sistem|kompleksitas|big-?o|refactor|analisis mendalam|secara mendalam|langkah demi langkah lengkap|bandingkan secara rinci|teorema|lemma|persamaan diferensial|kalkulus lanjut|multivariabel|machine learning|deep learning|neural network|kriptografi|optimisasi|optimasi algoritma)\b/i;
+const RE_BERAT =
+  /\b(kode|koding|coding|program|pemrograman|script|skrip|python|javascript|typescript|java|php|golang|kotlin|rust|sql|query|html|css|react|laravel|api|error|bug|debug|fungsi|function|class|algoritma|struktur data|rumus|integral|turunan|limit|matriks|vektor|persamaan|fisika|kimia|biologi|statistik|probabilitas|ekonomi|akuntansi|manajemen|hukum|kuliah|perkuliahan|dosen|tugas|makalah|esai|essay|jurnal|skripsi|praktikum|ujian|uts|uas|soal|analisis|analisa|hitunglah|tentukan|jelaskan secara rinci)\b/i;
+const RE_KODE = /```|=>|\bdef \w+\(|\bfunction\s*\w*\(|#include|\bSELECT\b[\s\S]*\bFROM\b|<\/?[a-z][\w-]*[ >]|;\s*$/im;
+
+/**
+ * Seberapa berat pertanyaan ini, dari isinya (tanpa memanggil AI): ringan = obrolan & pertanyaan harian;
+ * berat = kuliah, koding, hitungan, foto; sangat berat = pembuktian, riset, desain sistem, teks/kode sangat panjang.
+ */
+export function tingkatSoal(teks: string, o: { gambar?: boolean; kutipan?: string } = {}): TingkatSoal {
+  const kutip = (o.kutipan ?? "").slice(0, 3000);
+  const panjang = teks.length + kutip.length;
+  const adaKode = RE_KODE.test(`${teks}\n${kutip}`);
+  if (RE_SANGAT_BERAT.test(teks) || panjang > 1200 || (adaKode && panjang > 600)) return "sangat_berat";
+  if (RE_BERAT.test(teks) || adaKode || panjang > 280 || o.gambar) return "berat";
+  return "ringan";
+}
+
+const MODEL_TINGKAT: Record<TingkatSoal, string> = { ringan: "haiku", berat: "sonnet", sangat_berat: "opus" };
+
+/**
+ * Model Claude untuk pesan grup ini. Opus paling boros kuota langganan (dipakai bersama claude.ai), jadi turun ke
+ * Sonnet kalau sesi 5 jam ≥ 70% atau mingguan ≥ 85%. undefined = ikut model dari pengaturan Asisten.
+ */
+export async function modelClaudeGrup(db: Db, tingkat: TingkatSoal, now: Date): Promise<string | undefined> {
+  const pilih = await getSetting(db, "grup_ai_model_claude");
+  if (pilih === "bawaan") return undefined;
+  if (pilih === "haiku" || pilih === "sonnet" || pilih === "opus") return pilih;
+  const m = MODEL_TINGKAT[tingkat];
+  if (m !== "opus") return m;
+  const penuh = (await batasClaude(db, now)).some((j) => (j.kode === "five_hour" ? j.persen >= 70 : j.persen >= 85));
+  return penuh ? "sonnet" : m;
+}
+
 // ---------------------------------------------------------------- giliran penyedia (round robin)
 
 /** Penyedia yang sudah tersambung (punya token / key / login), urut tetap: Claude, Gemini, OpenRouter. */
@@ -199,15 +238,17 @@ async function perintahGrup(db: Db, jidIni: string, jidAktif: string, arg: strin
     return "Ingatan percakapan grup dihapus.";
   }
   if (kata === "status" || !kata) {
-    const [aktif, mode, batas, tersedia, pakai] = await Promise.all([
+    const [aktif, mode, batas, tersedia, pakai, modelC] = await Promise.all([
       getSetting(db, "grup_ai_aktif"),
       getSetting(db, "grup_ai_mode"),
       getSettingNumber(db, "grup_ai_batas_harian"),
       penyediaTersedia(db),
       pemakaianGrupHariIni(db, now),
+      getSetting(db, "grup_ai_model_claude"),
     ]);
     return [
       `*AI grup:* ${aktif === "1" ? "aktif" : "mati"} · mode ${mode}`,
+      `Model Claude: ${modelC === "otomatis" ? "otomatis (Haiku ringan · Sonnet kuliah/koding · Opus sangat berat)" : modelC}`,
       `Pemakaian hari ini: ${pakai}${batas > 0 ? ` / ${batas}` : " (tanpa batas)"}`,
       `Penyedia bergiliran: ${tersedia.length ? tersedia.map((p) => LABEL_PENYEDIA[p]).join(" → ") : "belum ada"}`,
     ].join("\n");
@@ -315,11 +356,14 @@ export async function prosesPesanGrup(db: Db, m: IncomingWaMessage, now: Date, o
     isi,
   ].join("\n");
 
+  // giliran Claude: model dipilih dari beratnya soal (haiku / sonnet / opus); penyedia lain memakai model otomatisnya sendiri
+  const modelClaude = await modelClaudeGrup(db, tingkatSoal(isi, { gambar: !!foto, kutipan: kutip?.teks }), now);
+
   try {
     opsi.mengetik?.();
     const urutan = urutanGiliran(tersedia, await giliranBerikut(db));
     for (const p of urutan) {
-      const h = await panggilAI(db, { fitur: "chat_grup", system: SYSTEM_GRUP, prompt, now, timeoutMs: 60_000, penyedia: p, gambar: foto?.file });
+      const h = await panggilAI(db, { fitur: "chat_grup", system: SYSTEM_GRUP, prompt, now, timeoutMs: p === "claude" && modelClaude === "opus" ? 120_000 : 60_000, penyedia: p, model: p === "claude" ? modelClaude : undefined, gambar: foto?.file });
       if (!h.ok) continue; // penyedia ini gagal: langsung giliran berikutnya (alasan teknis tercatat di log panggilan AI)
       const jawaban = bersihkanBalasan(h.teks);
       if (!jawaban) continue;
