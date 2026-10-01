@@ -44,6 +44,8 @@ const nextConfig = {
       { source: "/:path*", headers: headerKeamanan },
       // data pribadi: jangan pernah disimpan cache browser/proxy
       { source: "/api/:path*", headers: [{ key: "Cache-Control", value: "no-store" }] },
+      // service worker harus selalu dicek versi terbarunya
+      { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache" }] },
     ];
   },
 };

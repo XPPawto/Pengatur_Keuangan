@@ -111,6 +111,8 @@ pm2 start npm --name dompetkos -- start
 pm2 save && pm2 startup
 ```
 
+**Pasang di iPhone (jadi aplikasi):** buka website di **Safari** → tombol **Bagikan** → **Tambah ke Layar Utama**. DompetKos terbuka layar penuh seperti aplikasi: ikon & layar pembuka sendiri (terang/gelap, termasuk iPhone 13), pas dengan poni & home indicator, input tidak bikin layar membesar, **tarik ke bawah untuk muat ulang**, dan halaman "Lagi offline" kalau internet putus. Login sekali di aplikasinya (cookie aplikasi terpisah dari Safari). Data pribadi tidak pernah disimpan di cache HP.
+
 Di HP Android bekas (Termux): `pkg install nodejs git`, langkah sama, lalu `termux-wake-lock`.
 Buka dari HP di Wi-Fi yang sama: `http://<ip-laptop>:3000`, lalu "Tambahkan ke layar utama" supaya terasa seperti aplikasi.
 

@@ -21,5 +21,6 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!login|api/health|_next/static|_next/image|favicon.ico|icon.svg|manifest.webmanifest).*)"],
+  // aset PWA publik (ikon, splash, service worker, halaman offline) tidak berisi data pribadi
+  matcher: ["/((?!login|api/health|_next/static|_next/image|favicon.ico|icon.svg|apple-icon|icons/|splash|sw.js|offline.html|manifest.webmanifest).*)"],
 };
