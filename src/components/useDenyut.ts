@@ -25,6 +25,7 @@ export interface LogLive {
 const LABEL: Record<string, string> = {
   chat_web: "Chat website",
   chat_wa: "Asisten WhatsApp",
+  chat_grup: "AI grup WhatsApp",
   struk: "Baca foto",
   review: "Review Sabtu",
   kategori: "Tebak kategori",
@@ -46,8 +47,9 @@ export interface Berjalan {
   fitur: string;
 }
 // semua penyedia (Claude & cadangan) melayani node fitur: DompetKos → penyedia → fitur, lalu balik
-const pergi = (p: string, f: string): [string, string][] => [["hub", p], [p, f]];
-const pulang = (p: string, f: string): [string, string][] => [[f, p], [p, "hub"]];
+// AI grup WhatsApp tidak lewat DompetKos: WhatsApp → grup → penyedia (giliran round robin), lalu balik
+const pergi = (p: string, f: string): [string, string][] => (f === "chat_grup" ? [["wa", "grup"], ["grup", p]] : [["hub", p], [p, f]]);
+const pulang = (p: string, f: string): [string, string][] => (f === "chat_grup" ? [[p, "grup"], ["grup", "wa"]] : [[f, p], [p, "hub"]]);
 const MERAH = "var(--bad)";
 
 /**

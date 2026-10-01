@@ -10,8 +10,9 @@ import { useDenyut, WARNA_PENYEDIA, type LogLive } from "./useDenyut";
 
 type IdFitur = "chat_web" | "chat_wa" | "struk" | "review" | "kategori";
 type IdPenyedia = "claude" | "gemini" | "openrouter";
-type IdNode = "hub" | "wa" | "pemilik" | "keluarga" | "antrean" | IdPenyedia | IdFitur | "fitur";
-type Gaya = "aktif" | IdPenyedia | "pakai_claude" | "pakai_gemini" | "pakai_openrouter" | "tunggu" | "putus" | "biasa" | "redup" | "sembunyi";
+type IdNode = "hub" | "wa" | "pemilik" | "keluarga" | "antrean" | "grup" | IdPenyedia | IdFitur | "fitur";
+/** rr_* = penyedia ikut bergiliran di AI grup; rrnext_* = penyedia yang mendapat giliran berikutnya (tebal & mengalir) */
+type Gaya = "aktif" | IdPenyedia | "pakai_claude" | "pakai_gemini" | "pakai_openrouter" | `rr_${IdPenyedia}` | `rrnext_${IdPenyedia}` | "tunggu" | "putus" | "biasa" | "redup" | "sembunyi";
 
 const PENYEDIA: IdPenyedia[] = ["claude", "gemini", "openrouter"];
 const FITUR: IdFitur[] = ["chat_web", "chat_wa", "struk", "kategori", "review"];
@@ -49,6 +50,7 @@ const LEBAR: Tata = {
     wa: [270, 215],
     keluarga: [100, 380],
     antrean: [290, 520],
+    grup: [580, 565],
     hub: [500, 315],
     claude: [790, 140],
     gemini: [790, 315],
@@ -59,13 +61,14 @@ const LEBAR: Tata = {
     kategori: [1130, 440],
     review: [1130, 560],
   },
-  sisi: [...SISI_INTI, ...PENYEDIA.flatMap((p) => FITUR.map((f): [IdNode, IdNode] => [p, f]))],
+  // AI grup WhatsApp tidak lewat DompetKos: WhatsApp → grup → tiap penyedia (bergiliran)
+  sisi: [...SISI_INTI, ["wa", "grup"], ...PENYEDIA.map((p): [IdNode, IdNode] => ["grup", p]), ...PENYEDIA.flatMap((p) => FITUR.map((f): [IdNode, IdNode] => [p, f]))],
 };
 
 /** Layar sempit: fitur AI digabung jadi satu kartu daftar, tiga penyedia sebaris di bawahnya. */
 const SEMPIT: Tata = {
   w: 420,
-  h: 810,
+  h: 960,
   arah: "tegak",
   pos: {
     fitur: [210, 100],
@@ -77,6 +80,7 @@ const SEMPIT: Tata = {
     pemilik: [102, 635],
     keluarga: [318, 635],
     antrean: [210, 750],
+    grup: [210, 875], // kartu daftar (rotasi + jumlah per penyedia); garis ke penyedia tidak digambar di layar sempit
   },
   sisi: [...SISI_INTI, ...PENYEDIA.map((p): [IdNode, IdNode] => [p, "fitur"])],
 };
@@ -89,6 +93,12 @@ const WARNA_GARIS: Record<Exclude<Gaya, "sembunyi">, { stroke: string; lebar: nu
   pakai_claude: { stroke: WARNA_PENYEDIA.claude, lebar: 1.6, op: 0.75 },
   pakai_gemini: { stroke: WARNA_PENYEDIA.gemini, lebar: 1.6, op: 0.75 },
   pakai_openrouter: { stroke: WARNA_PENYEDIA.openrouter, lebar: 1.6, op: 0.75 },
+  rr_claude: { stroke: WARNA_PENYEDIA.claude, lebar: 1.8, putus: "6 5", op: 0.7 },
+  rr_gemini: { stroke: WARNA_PENYEDIA.gemini, lebar: 1.8, putus: "6 5", op: 0.7 },
+  rr_openrouter: { stroke: WARNA_PENYEDIA.openrouter, lebar: 1.8, putus: "6 5", op: 0.7 },
+  rrnext_claude: { stroke: WARNA_PENYEDIA.claude, lebar: 3.2, alir: true },
+  rrnext_gemini: { stroke: WARNA_PENYEDIA.gemini, lebar: 3.2, alir: true },
+  rrnext_openrouter: { stroke: WARNA_PENYEDIA.openrouter, lebar: 3.2, alir: true },
   tunggu: { stroke: "var(--warn)", lebar: 1.8, putus: "5 5" },
   putus: { stroke: "var(--bad)", lebar: 1.6, putus: "4 6", op: 0.8 },
   biasa: { stroke: "var(--line-strong)", lebar: 1.4 },
@@ -123,7 +133,9 @@ interface Node {
   daftar?: { ikon: IconName; label: string; nilai: string; nyala: boolean }[];
 }
 
-function bangunNode(d: DataKoneksi): Record<IdNode, Node> {
+const NAMA_PENYEDIA: Record<IdPenyedia, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter" };
+
+function bangunNode(d: DataKoneksi, sempit = false): Record<IdNode, Node> {
   const waNada = d.wa.status === "terhubung" && d.wa.botHidup ? "ok" : d.wa.status === "menunggu_pairing" ? "warn" : "bad";
   const waSub = !d.wa.botHidup ? "Proses bot mati" : d.wa.status === "terhubung" ? `Terhubung · ${samarNomor(d.wa.nomorBot)}` : d.wa.status === "menunggu_pairing" ? "Menunggu pairing" : "Terputus";
   const aiNada = !d.ai.aktif || !d.ai.adaToken ? undefined : d.ai.claudeSiap ? "claude" : "bad";
@@ -144,7 +156,26 @@ function bangunNode(d: DataKoneksi): Record<IdNode, Node> {
     ]),
   ) as Record<IdFitur, Node>;
 
+  const g = d.grup;
+  const grupSub = !g.dipilih
+    ? "Belum dipilih · ketik !aigrup aktif di grup"
+    : !g.aktif
+      ? "Dimatikan"
+      : !g.roda.length
+        ? "Belum ada penyedia tersambung"
+        : `Round robin · berikut ${NAMA_PENYEDIA[g.berikut ?? g.roda[0]]} · ${g.hariIni}× hari ini`;
+  const grup: Node = {
+    ikon: tile("users", g.aktif ? "bg-ok-bg text-ok" : "bg-subtle text-muted"),
+    judul: "AI grup WhatsApp",
+    sub: grupSub,
+    href: "#grup",
+    nada: g.aktif ? "ok" : undefined,
+    // layar sempit: kartu daftar rotasi (▶ = giliran berikut) menggantikan garis ke tiap penyedia
+    daftar: sempit && g.aktif && g.roda.length ? g.roda.map((p) => ({ ikon: "bot" as IconName, label: NAMA_PENYEDIA[p], nilai: `${g.berikut === p ? "▶ " : ""}${g.per[p] ?? 0}×`, nyala: true })) : undefined,
+  };
+
   return {
+    grup,
     hub: {
       ikon: <Logo size={30} />,
       judul: "DompetKos",
@@ -212,6 +243,12 @@ function kondisiPenyedia(d: DataKoneksi, p: IdPenyedia): "siap" | "tidak_ada" | 
 function gayaSisi(d: DataKoneksi, a: IdNode, b: IdNode): Gaya {
   const waNyala = d.wa.status === "terhubung" && d.wa.botHidup;
   if (a === "hub" && b === "wa") return waNyala ? "aktif" : d.wa.status === "menunggu_pairing" ? "tunggu" : "putus";
+  if (a === "wa" && b === "grup") return !d.grup.aktif ? "redup" : waNyala ? "aktif" : "putus";
+  if (a === "grup" && isPenyedia(b)) {
+    // hanya penyedia yang tersambung ikut bergiliran; yang lain tidak digambar
+    if (!d.grup.aktif || !d.grup.roda.includes(b)) return "sembunyi";
+    return d.grup.berikut === b ? `rrnext_${b}` : `rr_${b}`;
+  }
   if (a === "wa") return waNyala ? (b === "keluarga" && !d.nomor.keluarga ? "redup" : "biasa") : "redup";
   if (a === "hub" && isPenyedia(b)) {
     const k = kondisiPenyedia(d, b);
@@ -240,7 +277,7 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
   const [d, setD] = useState(awal);
   const [ref, cw] = useWidth<HTMLDivElement>(640);
   const tata = cw < 640 ? SEMPIT : LEBAR;
-  const maksTinggi = tata === LEBAR ? 520 : 820;
+  const maksTinggi = tata === LEBAR ? 520 : 960;
   const kFit = Math.min(cw / tata.w, maksTinggi / tata.h);
   const tinggi = Math.round(tata.h * kFit);
   const fit = useCallback(() => ({ k: kFit, x: (cw - tata.w * kFit) / 2, y: 0 }), [kFit, cw, tata.w]);
@@ -251,7 +288,7 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
   const { jejak, berjalan, log, waktu } = useDenyut();
 
   // node fitur yang tidak ada di tata letak ini (HP) dipetakan ke kartu "Fitur AI"
-  const petakan = (id: string) => (tata.pos[id as IdNode] ? id : "fitur");
+  const petakan = (id: string) => (id === "chat_grup" ? "grup" : tata.pos[id as IdNode] ? id : "fitur");
   const titik = jejak
     .filter((j) => waktu >= j.mulai && waktu <= j.mulai + j.durasi)
     .map((j) => {
@@ -313,7 +350,7 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoom]);
 
-  const node = bangunNode(d);
+  const node = bangunNode(d, tata === SEMPIT);
 
   return (
     <div ref={ref} className="w-full">
@@ -357,6 +394,25 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
                 />
               );
             })}
+            {tata === LEBAR &&
+              d.grup.aktif &&
+              PENYEDIA.filter((p) => d.grup.roda.includes(p)).map((p) => {
+                const [x1, y1] = tata.pos.grup!;
+                const [x2, y2] = tata.pos[p]!;
+                const x = (x1 + x2) / 2;
+                const y = (y1 + y2) / 2;
+                const berikut = d.grup.berikut === p;
+                const teks = `${berikut ? "▶ " : ""}${d.grup.per[p] ?? 0}×`;
+                const lebar = 18 + teks.length * 7;
+                return (
+                  <g key={`rr-${p}`}>
+                    <rect x={x - lebar / 2} y={y - 11} width={lebar} height={22} rx={11} fill="var(--card)" stroke={WARNA_PENYEDIA[p]} strokeWidth={berikut ? 2.2 : 1.2} />
+                    <text x={x} y={y + 4.5} textAnchor="middle" fontSize="12" fontWeight="700" fill={WARNA_PENYEDIA[p]}>
+                      {teks}
+                    </text>
+                  </g>
+                );
+              })}
             {titik.map((t) => (
               <g key={t.id}>
                 <circle cx={t.x} cy={t.y} r={13} fill={t.warna} opacity={0.2} />
@@ -423,6 +479,7 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
         {d.ai.cadangan.map((c) =>
           kondisiPenyedia(d, c.penyedia as IdPenyedia) === "tidak_ada" ? null : <Legenda key={c.penyedia} warna={WARNA_PENYEDIA[c.penyedia]} alir label={`${c.label} tersambung`} />,
         )}
+        {d.grup.aktif && <Legenda warna={WARNA_PENYEDIA.gemini} putus label="AI grup: bergiliran antar penyedia (▶ = berikut, angka = jawaban hari ini)" />}
         <Legenda warna="var(--line-strong)" label="Fitur bisa dijawab penyedia ini" />
         <Legenda warna={WARNA_PENYEDIA.claude} label="Dipakai hari ini (warna penyedia)" op={0.75} />
         <Legenda warna="var(--warn)" putus label="Menunggu / kena batas" />

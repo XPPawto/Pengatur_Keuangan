@@ -11,14 +11,18 @@ import type { BarisStatModel } from "@/lib/ai/model";
 import { dataKoneksi, ringkasanPemakaian } from "@/lib/services/koneksi";
 import { getAllSettings, getSetting } from "@/lib/services/settings";
 import CadanganPanel from "@/components/CadanganPanel";
+import GrupAIPanel from "@/components/GrupAIPanel";
+import { penyediaTersedia } from "@/lib/ai/grup";
+import { LABEL_PENYEDIA } from "@/lib/ai/panggil";
 import { daftarModelGratis } from "@/lib/ai/openrouter";
-import { fmtTanggal, wibDate, wibHM } from "@/lib/time";
+import { fmtTanggal, fromWib, wibDate, wibHM } from "@/lib/time";
 
 export const metadata = { title: "Koneksi" };
 
 const WARNA_FITUR: Record<string, string> = {
   chat_web: "var(--series-1)",
   chat_wa: "var(--series-2)",
+  chat_grup: "var(--brand)",
   struk: "var(--series-3)",
   review: "var(--series-4)",
   kategori: "var(--series-5)",
@@ -66,6 +70,9 @@ export default async function KoneksiPage() {
       } satisfies BarisStatModel;
     })
     .sort((a, b) => a.penyedia.localeCompare(b.penyedia) || b.ok - a.ok || a.model.localeCompare(b.model));
+  // AI grup WhatsApp: penyedia yang bergiliran & pemakaian hari ini
+  const penyediaGrup = await penyediaTersedia(prisma);
+  const pakaiGrup = await prisma.aiCall.count({ where: { waktu: { gte: fromWib(wibDate(now)) }, fitur: "chat_grup", utama: true } });
   // daftar model Gemini dari Google: dibaca dari cache, dimuat di latar belakang kalau belum ada (tidak menunda halaman)
   const keyGemini = (await kunciCadangan(prisma, "gemini")).kunci;
   const geminiDitemukan = daftarModelGeminiCache();
@@ -128,6 +135,20 @@ export default async function KoneksiPage() {
           autoOpenRouter={setel.ai_openrouter_auto !== "0"}
           statModel={statModel}
           geminiDitemukan={geminiDitemukan}
+        />
+      </section>
+
+      <section id="grup" className="scroll-mt-20 space-y-3">
+        <h2 className="section-title">AI grup WhatsApp</h2>
+        <GrupAIPanel
+          jid={setel.grup_ai_jid}
+          aktif={setel.grup_ai_aktif === "1"}
+          mode={setel.grup_ai_mode}
+          batas={Number(setel.grup_ai_batas_harian) || 150}
+          perOrang={Number(setel.grup_ai_per_orang_menit) || 3}
+          tanda={setel.grup_ai_tanda === "1"}
+          pakaiHariIni={pakaiGrup}
+          penyedia={penyediaGrup.map((p) => LABEL_PENYEDIA[p])}
         />
       </section>
 
