@@ -92,6 +92,8 @@ export default async function KoneksiPage() {
           modelGeminiRingan={setel.ai_gemini_model_ringan}
           modelOpenRouter={setel.ai_openrouter_model}
           modelGratis={modelGratis}
+          autoGemini={setel.ai_gemini_auto !== "0"}
+          autoOpenRouter={setel.ai_openrouter_auto !== "0"}
         />
       </section>
 
