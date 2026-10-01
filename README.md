@@ -297,6 +297,8 @@ Tempel token di website → **Koneksi → Claude** → *Simpan & tes*. Status be
 
 Kalimat yang dipahami perintah biasa tetap diproses instan tanpa AI (hemat kuota). Kata baru (mis. "seblak") ditebak amplopnya oleh AI dengan model ringan, lalu **dipelajari**: lain kali langsung dikenali tanpa AI. Rekap Sabtu mendapat evaluasi & satu tantangan minggu depan.
 
+**Pilih model sendiri.** Di WhatsApp: `or <pesan>` dijawab OpenRouter dan `gm <pesan>` dijawab Gemini (model dari pengaturan), contoh `or gimana kalau gw beli sepatu 150k`. Hanya penyedia itu yang dicoba (tanpa pindah ke cadangan) dan balasannya diberi tanda penyedia + model. Tanpa kode, Claude dulu dan cadangan otomatis hanya kalau Claude error / kena batas. Di website (Asisten), kotak chat punya pilihan **Dijawab oleh** (Otomatis atau penyedia yang sudah tersambung, plus modelnya).
+
 **AI cadangan (gratis, otomatis):** kalau Claude kena batas, tokennya ditolak, atau error, asisten pindah ke cadangan sesuai urutan (Koneksi → AI cadangan), dan balasannya diberi tanda "lewat Gemini/OpenRouter".
 
 - **Gemini**, resmi dari Google, dua cara: **API key** gratis dari Google AI Studio yang ditempel di website (dipanggil langsung ke API resmi Gemini, tidak perlu memasang apa pun, tanpa tool), atau **login akun Google** lewat Gemini CLI (`npm i -g @google/gemini-cli`, lalu sekali `HOME=$PWD/data/gemini-home NO_BROWSER=true gemini` → *Login with Google*). Jalur CLI diisolasi seperti Claude: folder khusus bot, lingkungan proses bersih, hanya tool baca file (shell, web, tulis file ditolak lewat Policy Engine).
