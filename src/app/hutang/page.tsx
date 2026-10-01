@@ -143,8 +143,8 @@ export default async function HutangPage() {
           </ul>
         )}
       </Card>
-      <p className="flex items-center justify-center gap-1.5 text-xs text-muted">
-        <Icon name="message" size={14} /> Di WhatsApp: <code>pinjemin budi 20k</code> · <code>budi bayar 10k</code> · <code>patungan galon 18k sama budi andi</code>
+      <p className="text-center text-xs leading-relaxed text-muted">
+        Di WhatsApp: <code>pinjemin budi 20k</code> · <code>budi bayar 10k</code> · <code>patungan galon 18k sama budi andi</code>
       </p>
     </div>
   );
