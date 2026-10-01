@@ -10,7 +10,7 @@ import { ambilJson, jalankanAksiAI, tanyaAsisten, validasiAksi } from "@/lib/ai/
 import { undoActivity, lastUndoable } from "@/lib/services/undo";
 import { jadwalkanPengingat } from "@/lib/services/scheduler";
 import { cekKesehatan } from "@/lib/services/health";
-import { dataKoneksi, ringkasanPemakaian } from "@/lib/services/koneksi";
+import { dataKoneksi, denyutKoneksi, ringkasanPemakaian } from "@/lib/services/koneksi";
 import { setSetting } from "@/lib/services/settings";
 import { kalimatBebas, parseMessage } from "@/lib/parser/message";
 import { resetDb } from "./helpers";
@@ -564,3 +564,56 @@ describe("rekap Sabtu, koneksi, kesehatan", () => {
     expect(h.cek.find((c) => c.kode === "ai")!.status).toBe("masalah");
   });
 });
+
+describe("peta koneksi realtime (denyut)", () => {
+  it("panggilan Claude tercatat 'berjalan' selama Claude mikir, lalu diperbarui", async () => {
+    await sambung();
+    let selagiJalan: string | undefined;
+    pulihkan();
+    pulihkan = setPenjalanAI(async () => {
+      selagiJalan = (await db.aiCall.findFirst({ orderBy: { id: "desc" } }))?.status;
+      return ok("x");
+    });
+    await panggilAI(db, { fitur: "chat_web", system: "s", prompt: "p", now: at("2026-10-05") });
+    expect(selagiJalan).toBe("berjalan");
+    expect((await db.aiCall.findFirst())?.status).toBe("ok");
+    const u = await ringkasanPemakaian(db, at("2026-10-05", 13));
+    expect(u.hariIni).toMatchObject({ panggilan: 1, gagal: 0 });
+  });
+
+  it("aktivitas sejak kursor: arah & peran pesan (tanpa isi), panggilan Claude, cek status", async () => {
+    const awal = await denyutKoneksi(db, new Date(), {});
+    expect(awal).toMatchObject({ pesan: [], ai: [] });
+
+    await kirim("tempe 5k", at("2026-10-05"));
+    await handleMessage(db, { nomor: "628111111111", text: "halo", now: at("2026-10-05") }); // nomor asing: tidak ditampilkan
+    await db.messageLog.create({ data: { arah: "keluar", nomor: ORTU, isi: "laporan", proaktif: true } });
+    const jalan = await db.aiCall.create({ data: { fitur: "chat_wa", model: "sonnet", status: "berjalan", waktu: new Date() } });
+    const basi = await db.aiCall.create({ data: { fitur: "struk", model: "sonnet", status: "berjalan", waktu: new Date(Date.now() - 10 * 60_000) } });
+
+    const d = await denyutKoneksi(db, new Date(), { pesan: awal.kursor.pesan, ai: awal.kursor.ai });
+    expect(d.pesan.map((p) => [p.arah, p.peran, p.proaktif])).toEqual([
+      ["masuk", "pemilik", false],
+      ["keluar", "pemilik", false],
+      ["keluar", "keluarga", true],
+    ]);
+    expect(JSON.stringify(d.pesan)).not.toContain("tempe");
+    expect(d.ai.map((a) => [a.fitur, a.status])).toEqual([
+      ["chat_wa", "berjalan"],
+      ["struk", "berjalan"],
+    ]);
+
+    await db.aiCall.update({ where: { id: jalan.id }, data: { status: "ok" } });
+    const c = await denyutKoneksi(db, new Date(), { pesan: d.kursor.pesan, ai: d.kursor.ai, cek: [jalan.id, basi.id] });
+    expect(c.pesan).toEqual([]);
+    expect(c.cek.sort((a, b) => a.id - b.id)).toEqual([
+      { id: jalan.id, status: "ok" },
+      { id: basi.id, status: "terputus" },
+    ]);
+
+    // halaman baru dibuka: hanya panggilan yang masih berjalan (tidak memutar ulang riwayat)
+    const baru = await denyutKoneksi(db, new Date(), {});
+    expect(baru.ai).toEqual([]);
+  });
+});
+

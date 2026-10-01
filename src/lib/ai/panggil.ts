@@ -277,13 +277,18 @@ export async function panggilAI(db: Db, r: PermintaanAI): Promise<HasilClaude> {
   }
 
   const model = await getSetting(db, r.ringan ? "ai_model_ringan" : "ai_model");
-  const hasil = await slot(() => penjalan({ system: r.system, prompt: r.prompt, model, gambar: r.gambar, timeoutMs: r.timeoutMs, token: tok.token }));
+  // baris "berjalan" dulu supaya peta koneksi bisa menampilkan Claude yang sedang mikir secara langsung
+  const log = await db.aiCall.create({ data: { waktu: r.now, fitur: r.fitur, model, status: "berjalan" } });
+  let hasil: HasilClaude;
+  try {
+    hasil = await slot(() => penjalan({ system: r.system, prompt: r.prompt, model, gambar: r.gambar, timeoutMs: r.timeoutMs, token: tok.token }));
+  } catch (e) {
+    hasil = { ok: false, alasan: "gagal", pesan: e instanceof Error ? e.message : String(e), durasiMs: 0 };
+  }
 
-  await db.aiCall.create({
+  await db.aiCall.update({
+    where: { id: log.id },
     data: {
-      waktu: r.now,
-      fitur: r.fitur,
-      model,
       status: hasil.ok ? "ok" : hasil.alasan,
       durasiMs: hasil.durasiMs,
       tokenMasuk: hasil.token?.masuk ?? 0,

@@ -90,7 +90,9 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
 export async function ringkasanPemakaian(db: Db, now: Date, hari = 14) {
   const today = wibDate(now);
   const mulai = addDays(today, -(hari - 1));
-  const calls = await db.aiCall.findMany({ where: { waktu: { gte: fromWib(mulai) } }, orderBy: { id: "desc" } });
+  const semua = await db.aiCall.findMany({ where: { waktu: { gte: fromWib(mulai) } }, orderBy: { id: "desc" } });
+  // panggilan yang masih berjalan belum punya hasil: tidak ikut statistik, tapi tampil di log
+  const calls = semua.filter((c) => c.status !== "berjalan");
   const tanggal = Array.from({ length: hari }, (_, i) => addDays(mulai, i));
   const fiturList = Object.keys(LABEL_FITUR) as FiturAI[];
 
@@ -137,6 +139,57 @@ export async function ringkasanPemakaian(db: Db, now: Date, hari = 14) {
       tokenTotal: tujuh.reduce((s, c) => s + c.tokenMasuk + c.tokenKeluar, 0),
     },
     perFitur,
-    terakhir: calls.slice(0, 15),
+    terakhir: semua.slice(0, 15).map((c) => ({ ...c, status: c.status === "berjalan" && now.getTime() - c.waktu.getTime() > BERJALAN_MAKS_MS ? "terputus" : c.status })),
   };
+}
+
+// ---------------------------------------------------------------- denyut (aktivitas langsung untuk animasi peta)
+
+/** Panggilan "berjalan" lebih lama dari ini dianggap terputus (proses mati di tengah jalan). */
+export const BERJALAN_MAKS_MS = 5 * 60_000;
+
+export interface Denyut {
+  kursor: { pesan: number; ai: number };
+  /** pesan WhatsApp baru (tanpa isi) */
+  pesan: { id: number; arah: "masuk" | "keluar"; peran: "pemilik" | "keluarga"; proaktif: boolean; waktu: string }[];
+  /** panggilan Claude baru (status bisa masih "berjalan") */
+  ai: { id: number; fitur: FiturAI; status: string; waktu: string }[];
+  /** status terbaru panggilan yang ditanyakan klien (yang tadinya masih berjalan) */
+  cek: { id: number; status: string }[];
+}
+
+/**
+ * Aktivitas sejak kursor terakhir klien: pesan WA masuk/keluar dan panggilan Claude. Isi pesan tidak pernah
+ * dikirim, hanya arah & peran nomornya. Tanpa kursor = hanya mengembalikan kursor (tidak memutar ulang riwayat).
+ */
+export async function denyutKoneksi(db: Db, now: Date, k: { pesan?: number; ai?: number; cek?: number[] }): Promise<Denyut> {
+  const [pesanAkhir, aiAkhir] = await Promise.all([
+    db.messageLog.findFirst({ orderBy: { id: "desc" }, select: { id: true } }),
+    db.aiCall.findFirst({ orderBy: { id: "desc" }, select: { id: true } }),
+  ]);
+  const kursor = { pesan: pesanAkhir?.id ?? 0, ai: aiAkhir?.id ?? 0 };
+  const out: Denyut = { kursor, pesan: [], ai: [], cek: [] };
+
+  if (k.pesan !== undefined && k.pesan < kursor.pesan) {
+    const peran = new Map((await listRecipients(db)).filter((r) => r.aktif).map((r) => [r.nomor, r.peran]));
+    const rows = await db.messageLog.findMany({ where: { id: { gt: k.pesan } }, orderBy: { id: "asc" }, take: 30 });
+    for (const m of rows) {
+      const p = peran.get(m.nomor);
+      if (!p || (m.arah !== "masuk" && m.arah !== "keluar")) continue;
+      out.pesan.push({ id: m.id, arah: m.arah, peran: p, proaktif: m.proaktif, waktu: m.waktu.toISOString() });
+    }
+  }
+  if (k.ai === undefined) {
+    // halaman baru dibuka: tampilkan panggilan yang sedang berjalan
+    const rows = await db.aiCall.findMany({ where: { status: "berjalan", waktu: { gte: new Date(now.getTime() - BERJALAN_MAKS_MS) } }, orderBy: { id: "asc" }, take: 5 });
+    out.ai = rows.map((c) => ({ id: c.id, fitur: c.fitur as FiturAI, status: c.status, waktu: c.waktu.toISOString() }));
+  } else if (k.ai < kursor.ai) {
+    const rows = await db.aiCall.findMany({ where: { id: { gt: k.ai } }, orderBy: { id: "asc" }, take: 20 });
+    out.ai = rows.map((c) => ({ id: c.id, fitur: c.fitur as FiturAI, status: c.status, waktu: c.waktu.toISOString() }));
+  }
+  if (k.cek?.length) {
+    const rows = await db.aiCall.findMany({ where: { id: { in: k.cek.slice(0, 20) } }, select: { id: true, status: true, waktu: true } });
+    out.cek = rows.map((c) => ({ id: c.id, status: c.status === "berjalan" && now.getTime() - c.waktu.getTime() > BERJALAN_MAKS_MS ? "terputus" : c.status }));
+  }
+  return out;
 }
