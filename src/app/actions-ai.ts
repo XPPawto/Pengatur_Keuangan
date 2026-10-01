@@ -166,7 +166,7 @@ export async function simpanCadanganAction(_: FormState, form: FormData): Promis
   const gmr = String(form.get("ai_gemini_model_ringan") ?? "").trim();
   const om = String(form.get("ai_openrouter_model") ?? "").trim();
   const urutan = String(form.get("ai_urutan_cadangan") ?? "gemini,openrouter");
-  if (![gm, gmr].every((m) => /^gemini-[\w.-]{1,60}$/.test(m))) return { error: "Nama model Gemini tidak valid (contoh: gemini-2.5-flash)." };
+  if (![gm, gmr].every((m) => /^gemini-[\w.-]{1,60}$/.test(m))) return { error: "Nama model Gemini tidak valid (contoh: gemini-3.6-flash)." };
   if (om && !modelGratis(om)) return { error: "Model OpenRouter harus model gratis (berakhiran :free)." };
   if (!["gemini,openrouter", "openrouter,gemini"].includes(urutan)) return { error: "Urutan tidak dikenal." };
   await setSetting(prisma, "ai_claude_aktif", onOff("ai_claude_aktif"));

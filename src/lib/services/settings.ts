@@ -29,8 +29,8 @@ export const DEFAULT_SETTINGS = {
   /** Penyedia AI cadangan saat Claude tidak bisa dipakai. */
   ai_claude_aktif: "1",
   ai_gemini_aktif: "0",
-  ai_gemini_model: "gemini-2.5-flash",
-  ai_gemini_model_ringan: "gemini-2.5-flash-lite",
+  ai_gemini_model: "gemini-3.6-flash",
+  ai_gemini_model_ringan: "gemini-3.5-flash-lite",
   ai_openrouter_aktif: "0",
   /** wajib model gratis (berakhiran ":free"); kosong = pilih otomatis model gratis pertama */
   ai_openrouter_model: "",
