@@ -2,7 +2,7 @@ import type { Db } from "../db";
 import { addDays, fromWib, wibDate } from "../time";
 import { listRecipients } from "./recipients";
 import { getSetting, getSettingNumber } from "./settings";
-import { penyediaTersedia, urutanGiliran } from "../ai/grup";
+import { jawabanGrupHariIni, penyediaTersedia, urutanGiliran } from "../ai/grup";
 import type { Penyedia } from "../ai/panggil";
 import { LABEL_FITUR, statusAI, type FiturAI } from "../ai/panggil";
 
@@ -53,7 +53,9 @@ export interface DataKoneksi {
     per: Record<string, number>;
     /** penyedia yang tersambung = ikut bergiliran, urut: Claude, Gemini, OpenRouter */
     roda: Penyedia[];
-    /** penyedia yang mendapat giliran berikutnya */
+    /** gabung = semua penyedia menjawab bersama lalu digabung; giliran = bergantian (round robin) */
+    strategi: "gabung" | "giliran";
+    /** penyedia yang mendapat giliran berikutnya (hanya mode giliran) */
     berikut: Penyedia | null;
   };
 }
@@ -75,7 +77,7 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
     penyediaTersedia(db),
     getSettingNumber(db, "grup_ai_putaran"),
   ]);
-  const [grupJid, grupAktif, grupBatas] = await Promise.all([getSetting(db, "grup_ai_jid"), getSetting(db, "grup_ai_aktif"), getSettingNumber(db, "grup_ai_batas_harian")]);
+  const [grupJid, grupAktif, grupBatas, grupStrategi, grupHariIni] = await Promise.all([getSetting(db, "grup_ai_jid"), getSetting(db, "grup_ai_aktif"), getSettingNumber(db, "grup_ai_batas_harian"), getSetting(db, "grup_ai_strategi"), jawabanGrupHariIni(db, now)]);
   const aktif = penerima.filter((r) => r.aktif);
   return {
     wa: {
@@ -115,11 +117,12 @@ export async function dataKoneksi(db: Db, now: Date): Promise<DataKoneksi> {
     grup: {
       dipilih: !!grupJid,
       aktif: !!grupJid && grupAktif === "1",
-      hariIni: grupOk.reduce((n, x) => n + x._count._all, 0),
+      hariIni: grupHariIni, // jawaban (satu per pertanyaan, walau dijawab beberapa penyedia sekaligus)
       batas: grupBatas, // 0 = tanpa batas
       per: Object.fromEntries(grupOk.map((x) => [x.penyedia, x._count._all])),
       roda,
-      berikut: urutanGiliran(roda, putaran)[0] ?? null,
+      strategi: grupStrategi === "giliran" ? "giliran" : "gabung",
+      berikut: grupStrategi === "giliran" ? (urutanGiliran(roda, putaran)[0] ?? null) : null,
     },
   };
 }

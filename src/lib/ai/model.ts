@@ -1,6 +1,6 @@
 /** Pilihan penyedia & model untuk dropdown di halaman Asisten (aman dipakai komponen klien: tanpa impor server). */
 
-export type KodePenyedia = "claude" | "gemini" | "openrouter";
+export type KodePenyedia = "claude" | "gemini" | "openrouter" | "groq";
 
 export interface OpsiModel {
   v: string;
@@ -24,6 +24,9 @@ export const MODEL_CLAUDE: OpsiModel[] = [
 
 /** Seri 2.5 sudah ditutup untuk akun baru; model aktif dari pengaturan selalu ikut ditambahkan di halaman. */
 export const MODEL_GEMINI: OpsiModel[] = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"].map((v) => ({ v, l: v }));
+
+/** Model Groq yang umum dipakai (model aktif dari pengaturan & daftar dari Groq ikut ditambahkan di halaman). */
+export const MODEL_GROQ: OpsiModel[] = ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"].map((v) => ({ v, l: v }));
 
 /** Gabungkan model aktif dari pengaturan ke daftar (tanpa duplikat), model aktif di urutan pertama. */
 export function denganAktif(daftar: OpsiModel[], aktif: string): OpsiModel[] {

@@ -20,7 +20,7 @@ interface Pesan {
   dipilih?: boolean;
 }
 
-const NAMA_PENYEDIA: Record<string, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter" };
+const NAMA_PENYEDIA: Record<string, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter", groq: "Groq" };
 const KUNCI_PILIHAN = "dk-ai-pilihan";
 
 const NAMA: Record<string, string> = { makan: "Makan", data: "Paket data", paylater: "Paylater", kado: "Tabungan kado", darurat: "Darurat & kos" };
@@ -167,7 +167,7 @@ export default function AsistenChat({ riwayat, siap, pesanMati, opsi }: { riwaya
                 </div>
                 {m.penyedia && (m.dipilih || m.penyedia !== "claude") && !m.gagal && (
                   <p className="flex items-start gap-1.5 text-xs text-muted">
-                    <span className="mt-px shrink-0">{m.penyedia === "claude" || m.penyedia === "gemini" || m.penyedia === "openrouter" ? <LogoPenyedia penyedia={m.penyedia} size={13} /> : <Icon name="transfer" size={13} />}</span>
+                    <span className="mt-px shrink-0">{m.penyedia === "claude" || m.penyedia === "gemini" || m.penyedia === "openrouter" || m.penyedia === "groq" ? <LogoPenyedia penyedia={m.penyedia} size={13} /> : <Icon name="transfer" size={13} />}</span>
                     {/* nama model bisa panjang (mis. model OpenRouter): boleh terpatah supaya tidak keluar layar */}
                     <span className="min-w-0 [overflow-wrap:anywhere]">
                       Dijawab lewat {NAMA_PENYEDIA[m.penyedia] ?? m.penyedia}

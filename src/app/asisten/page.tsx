@@ -10,7 +10,8 @@ import { prisma } from "@/lib/db";
 import { getAllSettings } from "@/lib/services/settings";
 import { statusAI } from "@/lib/ai/panggil";
 import { pesanAIMati } from "@/lib/ai/asisten";
-import { MODEL_CLAUDE, MODEL_GEMINI, denganAktif, type OpsiPenyedia } from "@/lib/ai/model";
+import { MODEL_CLAUDE, MODEL_GEMINI, MODEL_GROQ, denganAktif, type OpsiPenyedia } from "@/lib/ai/model";
+import { daftarModelGroqCache } from "@/lib/ai/groq";
 import { daftarModelGratis } from "@/lib/ai/openrouter";
 import { hapusKataAction, ingatAction, lupakanAction, simpanPengaturanAIAction } from "../actions-ai";
 
@@ -35,10 +36,11 @@ export default async function AsistenPage() {
     daftarModelGratis().catch(() => []),
   ]);
   // penyedia yang sudah tersambung dan bisa dipilih di kotak chat
-  const ada = (k: "gemini" | "openrouter") => st.cadangan.some((c) => c.penyedia === k && c.ada);
+  const ada = (k: "gemini" | "openrouter" | "groq") => st.cadangan.some((c) => c.penyedia === k && c.ada);
   const opsi: OpsiPenyedia[] = [
     ...(st.token.ada ? [{ kode: "claude" as const, label: "Claude", modelDefault: s.ai_model, model: denganAktif(MODEL_CLAUDE, s.ai_model) }] : []),
     ...(ada("gemini") ? [{ kode: "gemini" as const, label: "Gemini", modelDefault: s.ai_gemini_model, model: denganAktif(MODEL_GEMINI, s.ai_gemini_model) }] : []),
+    ...(ada("groq") ? [{ kode: "groq" as const, label: "Groq", modelDefault: s.ai_groq_model, model: denganAktif([...MODEL_GROQ, ...(daftarModelGroqCache() ?? []).filter((m) => !MODEL_GROQ.some((x) => x.v === m)).map((v) => ({ v, l: v }))], s.ai_groq_model) }] : []),
     ...(ada("openrouter")
       ? [{ kode: "openrouter" as const, label: "OpenRouter (gratis)", modelDefault: s.ai_openrouter_model || "otomatis", model: denganAktif(modelGratis.map((m) => ({ v: m.id, l: m.gambar ? `${m.id} · bisa baca gambar` : m.id })), s.ai_openrouter_model) }]
       : []),

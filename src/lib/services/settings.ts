@@ -49,7 +49,16 @@ export const DEFAULT_SETTINGS = {
   grup_ai_model_claude: "otomatis",
   /** hitungan internal untuk giliran penyedia (round robin) */
   grup_ai_putaran: "0",
+  /** gabung = tiap pertanyaan dikirim ke semua penyedia sekaligus lalu jawabannya disatukan jadi yang terbaik (bawaan); giliran = satu penyedia per pertanyaan, bergantian (hemat kuota) */
+  grup_ai_strategi: "gabung",
+  /** hitungan internal jawaban hari ini: "YYYY-MM-DD:jumlah" */
+  grup_ai_hitung: "",
   ai_openrouter_auto: "1",
+  ai_groq_aktif: "0",
+  /** Groq: model utama & model tugas kecil; pindah model otomatis kalau penuh / batas / dihentikan */
+  ai_groq_model: "llama-3.3-70b-versatile",
+  ai_groq_model_ringan: "llama-3.1-8b-instant",
+  ai_groq_auto: "1",
   ai_openrouter_aktif: "0",
   /** wajib model gratis (berakhiran ":free"); kosong = pilih otomatis model gratis pertama */
   ai_openrouter_model: "",

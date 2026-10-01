@@ -38,8 +38,8 @@ const POLL_MS = 1500;
 
 const WA = "var(--ok)";
 const CLAUDE = "var(--claude)";
-export const WARNA_PENYEDIA: Record<string, string> = { claude: CLAUDE, gemini: "var(--series-1)", openrouter: "var(--series-5)" };
-const NAMA_PENYEDIA: Record<string, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter" };
+export const WARNA_PENYEDIA: Record<string, string> = { claude: CLAUDE, gemini: "var(--series-1)", openrouter: "var(--series-5)", groq: "var(--series-6)" };
+const NAMA_PENYEDIA: Record<string, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter", groq: "Groq" };
 
 /** Panggilan AI yang sedang berjalan: penyedia + fitur. */
 export interface Berjalan {
