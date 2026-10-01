@@ -19,17 +19,21 @@ interface Props {
   title: string;
   /** garis referensi horizontal (mis. rata-rata jatah) */
   refLine?: { value: number; label: string };
+  /** satuan angka: Rupiah (default) atau hitungan kali */
+  satuan?: "rp" | "kali";
 }
 
 /** Kolom bertumpuk: maksimal 24px, celah 2px antar segmen, ujung atas membulat 4px, tooltip per kolom. */
-export default function StackedColumns({ labels, series, data, height = 240, title, refLine }: Props) {
+export default function StackedColumns({ labels, series, data, height = 240, title, refLine, satuan = "rp" }: Props) {
+  const fmt = satuan === "rp" ? rp : (n: number) => `${n}×`;
+  const fmtAxis = satuan === "rp" ? rpAxis : (n: number) => String(n);
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
   const pad = { t: 14, r: refLine ? Math.max(52, Math.round(refLine.label.length * 6.6) + 14) : 12, b: 28, l: 44 };
   const iw = width - pad.l - pad.r;
   const ih = height - pad.t - pad.b;
   const totals = data.map((d) => series.reduce((s, x) => s + (d[x.key] ?? 0), 0));
-  const ticks = niceTicks(Math.max(1, ...totals, refLine?.value ?? 0));
+  const ticks = niceTicks(Math.max(1, ...totals, refLine?.value ?? 0), 4, satuan === "kali");
   const top = ticks[ticks.length - 1];
   const band = iw / Math.max(1, labels.length);
   const bw = Math.min(24, band * 0.6);
@@ -43,7 +47,7 @@ export default function StackedColumns({ labels, series, data, height = 240, tit
           <g key={t}>
             <line x1={pad.l} x2={width - pad.r} y1={y(t)} y2={y(t)} stroke="var(--grid)" strokeWidth={1} />
             <text x={pad.l - 8} y={y(t)} dy="0.32em" textAnchor="end" className="fill-[var(--muted)] text-[11px] num">
-              {rpAxis(t)}
+              {fmtAxis(t)}
             </text>
           </g>
         ))}
@@ -68,7 +72,7 @@ export default function StackedColumns({ labels, series, data, height = 240, tit
               })}
               {totals[i] > 0 && (labels.length <= 8 || hover === i) && (
                 <text x={cx} y={y(totals[i]) - 6} textAnchor="middle" className="fill-[var(--fg-2)] text-[10.5px] font-medium num">
-                  {rpAxis(totals[i])}
+                  {fmtAxis(totals[i])}
                 </text>
               )}
               <text x={cx} y={height - 8} textAnchor="middle" className="fill-[var(--muted)] text-[11px]">
@@ -99,13 +103,13 @@ export default function StackedColumns({ labels, series, data, height = 240, tit
                 <span className="inline-block size-2.5 rounded-sm" style={{ background: s.color }} />
                 {s.label}
               </span>
-              <span className="num">{rp(data[hover][s.key] ?? 0)}</span>
+              <span className="num">{fmt(data[hover][s.key] ?? 0)}</span>
             </p>
           ))}
           {series.length > 1 && (
             <p className="mt-1 flex justify-between border-t border-line pt-1 font-semibold">
               <span>Total</span>
-              <span className="num">{rp(totals[hover])}</span>
+              <span className="num">{fmt(totals[hover])}</span>
             </p>
           )}
         </div>

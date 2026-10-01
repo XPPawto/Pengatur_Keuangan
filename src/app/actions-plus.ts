@@ -18,6 +18,9 @@ import { recordExpense } from "@/lib/services/transactions";
 import { deleteTransfer } from "@/lib/services/transfers";
 import { undoActivity } from "@/lib/services/undo";
 import { logActivity } from "@/lib/services/activity-log";
+import { getSetting } from "@/lib/services/settings";
+import { statusAI } from "@/lib/ai/panggil";
+import { bacaFotoAI } from "@/lib/ai/asisten";
 import { ENVELOPE_KODE, type EnvelopeKode } from "@/lib/types";
 import type { FormState } from "./actions";
 
@@ -201,6 +204,11 @@ export async function simulasiAction(_: SimulasiState, form: FormData): Promise<
 export interface StrukState extends FormState {
   hasil?: HasilStruk;
   saranKode?: EnvelopeKode;
+  /** amplop per item dari AI */
+  kodeItem?: EnvelopeKode[];
+  olehAI?: boolean;
+  /** info non-struk (mis. bukti transfer) */
+  info?: string;
 }
 
 export async function bacaStrukAction(_: StrukState, form: FormData): Promise<StrukState> {
@@ -208,9 +216,18 @@ export async function bacaStrukAction(_: StrukState, form: FormData): Promise<St
   const file = form.get("foto");
   if (!(file instanceof File) || file.size === 0) return { error: "Pilih foto struknya dulu." };
   if (file.size > 8 * 1024 * 1024) return { error: "Foto terlalu besar (maks 8 MB)." };
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const now = new Date();
   try {
+    // Claude dulu (kalau aktif), OCR lokal sebagai cadangan
+    if ((await getSetting(prisma, "ai_struk")) === "1" && (await statusAI(prisma, now)).siap) {
+      const { hasil: f } = await bacaFotoAI(prisma, buffer, now);
+      if (f?.jenis === "struk") return { hasil: f.hasil, saranKode: f.kode, kodeItem: f.kodeItem, olehAI: true };
+      if (f?.jenis === "bukti_transfer") return { info: `Ini bukti transfer ${rp(f.nominal)}${f.pengirim ? ` dari ${f.pengirim}` : ""}. Catat lewat kartu "Kiriman tambahan" di Beranda.` };
+      if (f?.jenis === "lain") return { error: f.keterangan };
+    }
     const { bacaTeksGambar } = await import("@/lib/ocr/engine");
-    const teks = await bacaTeksGambar(Buffer.from(await file.arrayBuffer()));
+    const teks = await bacaTeksGambar(buffer);
     const hasil = parseStruk(teks);
     if (!hasil.total) return { error: "Struknya nggak kebaca jelas. Coba foto lebih terang & lurus." };
     const kat = hasil.items.map((i) => detectCategory(i.nama)).filter(Boolean) as EnvelopeKode[];

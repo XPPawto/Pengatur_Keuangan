@@ -2,7 +2,7 @@ import type { Db } from "../db";
 import { rp } from "../money";
 import { AppError } from "../services/errors";
 import { mergeDictionary, DEFAULT_DICTIONARY, detectCategory, type CategoryDictionary } from "../parser/category";
-import { parseMessage, type ExpenseItem, type ParsedMessage } from "../parser/message";
+import { kalimatBebas, parseMessage, type ExpenseItem, type ParsedMessage } from "../parser/message";
 import { getBalances } from "../services/envelopes";
 import { getDailyStatus, getStreak, markTanpaJajan } from "../services/daily";
 import { cancelPendingPeriod, getCurrentPeriod, proposePeriod, setPemasukan } from "../services/periods";
@@ -25,6 +25,8 @@ import { bayarDebt, createDebt, patungan, ringkasanDebt } from "../services/debt
 import { cekLonjakan } from "../services/prices";
 import { parseStruk, type HasilStruk } from "../ocr/struk";
 import { addDays, fmtTanggal, fmtTanggalPanjang, wibDate, wibHM } from "../time";
+import { ajariKata, bacaFotoAI, hapusRiwayat, ingat, jalankanAksiAI, lagiNgobrol, lupakan, pesanAIMati, tanyaAsisten, tebakKategoriAI, teksUsulan, type AksiAI } from "../ai/asisten";
+import { statusAI } from "../ai/panggil";
 import { ENVELOPE_KODE, KATA_BUKA_KUNCI, type EnvelopeKode } from "../types";
 import { normalizePhone } from "../whitelist";
 import { prosesKeluarga } from "./family";
@@ -48,6 +50,8 @@ export interface IncomingMessage {
   gambar?: () => Promise<Buffer>;
   /** pembaca teks gambar (OCR); bisa diganti saat tes */
   ocr?: (gambar: Buffer) => Promise<string>;
+  /** tampilkan status "mengetik…" di WhatsApp (hanya untuk pemilik) */
+  mengetik?: () => void;
 }
 
 /** Pilihan amplop saat kategori tidak jelas (Tabungan kado & Paylater sengaja tidak ditawarkan). */
@@ -58,13 +62,14 @@ type Pending =
   | { jenis: "masuk"; periodId: number; result: Parameters<typeof usulanPeriode>[1] }
   | { jenis: "kiriman"; dari: string; nominal: number; bagian: Bagian }
   | { jenis: "undo"; id: number }
-  | { jenis: "kategori"; items: ExpenseItem[]; raw: string; tanggal?: string }
+  | { jenis: "kategori"; items: ExpenseItem[]; raw: string; tanggal?: string; saran?: { kode: EnvelopeKode; kata: string } }
   | { jenis: "tahan"; barang: string; nominal: number; raw: string }
   | { jenis: "pindah_kado"; dari: EnvelopeKode; ke: EnvelopeKode; nominal: number; alasan: string }
   | { jenis: "pindah_alasan"; dari: EnvelopeKode; ke: EnvelopeKode; nominal: number }
-  | { jenis: "struk"; hasil: HasilStruk; kode: EnvelopeKode }
+  | { jenis: "struk"; hasil: HasilStruk; kode: EnvelopeKode; kodeItem?: EnvelopeKode[]; tanggal?: string }
   | { jenis: "saran"; transfers: SaranTransfer[] }
-  | { jenis: "rekon"; recId: number; selisih: number };
+  | { jenis: "rekon"; recId: number; selisih: number }
+  | { jenis: "ai"; aksi: AksiAI[] };
 
 const PENDING_TTL_MS: Record<Pending["jenis"], number> = {
   masuk: 12 * 3600_000,
@@ -77,6 +82,7 @@ const PENDING_TTL_MS: Record<Pending["jenis"], number> = {
   struk: 60 * 60_000,
   saran: 12 * 3600_000,
   rekon: 60 * 60_000,
+  ai: 2 * 3600_000,
 };
 
 const aktor = (nomor: string): Actor => ({ oleh: nomor, sumber: "wa" });
@@ -93,6 +99,10 @@ async function loadDictionary(db: Db): Promise<CategoryDictionary> {
     }
     const kode = it.envelopeKode as EnvelopeKode;
     extra[kode] = [...(extra[kode] ?? []), ...kw];
+  }
+  for (const k of await db.kataKategori.findMany()) {
+    const kode = k.envelopeKode as EnvelopeKode;
+    extra[kode] = [...(extra[kode] ?? []), k.kata];
   }
   return mergeDictionary(DEFAULT_DICTIONARY, extra);
 }
@@ -127,6 +137,7 @@ export async function handleMessage(db: Db, msg: IncomingMessage): Promise<strin
   }
   await db.messageLog.create({ data: { arah: "masuk", nomor, isi: msg.gambar ? `[gambar] ${msg.text}` : msg.text, waktu: now } });
 
+  if (peran === "pemilik") msg.mengetik?.();
   let replies: string[];
   try {
     if (peran === "keluarga") replies = await prosesKeluarga(db, nomor, msg.text, now);
@@ -155,6 +166,16 @@ async function proses(db: Db, nomor: string, text: string, now: Date): Promise<s
     if (parsed.type !== "ok" && parsed.type !== "pilihan") await clearPending(db, nomor);
   }
 
+  // Asisten AI: pertanyaan, permintaan, cerita bebas, atau lanjutan obrolan
+  let catatanAI: string | null = null;
+  if (parsed.type === "tanya") return cmdTanya(db, nomor, parsed.pertanyaan, now);
+  const arah = await keAsisten(db, nomor, text, parsed, pending?.jenis === "ai", now);
+  if (arah.ya) {
+    const r = await tanyaAsisten(db, { kanal: nomor, pesan: text, now });
+    if (r.ok) return balasAsisten(db, nomor, r, now);
+    catatanAI = pesanAIMati(r.alasan);
+  } else if (arah.catatan) catatanAI = arah.catatan;
+
   switch (parsed.type) {
     case "bantuan":
       return [BANTUAN];
@@ -180,8 +201,10 @@ async function proses(db: Db, nomor: string, text: string, now: Date): Promise<s
       return cmdKoreksiMasuk(db, nomor, parsed.nominal, now);
     case "kiriman":
       return cmdKiriman(db, nomor, parsed.dari, parsed.nominal, now);
-    case "expense":
-      return catat(db, nomor, parsed.items, text, now, parsed.kemarin ? addDays(wibDate(now), -1) : undefined);
+    case "expense": {
+      const r = await catat(db, nomor, parsed.items, text, now, parsed.kemarin ? addDays(wibDate(now), -1) : undefined);
+      return catatanAI ? [`${catatanAI}\nGw baca pakai cara biasa ya:\n\n${r.join("\n\n")}`] : r;
+    }
     case "bayar_paylater":
       return cmdBayarPaylater(db, nomor, parsed.nominal, text, now);
     case "tagihan":
@@ -213,6 +236,17 @@ async function proses(db: Db, nomor: string, text: string, now: Date): Promise<s
       return cmdPola(db, now);
     case "skor":
       return [teksSkor(await getPrestasi(db, now))];
+    case "ingat":
+      return cmdIngat(db, parsed.isi);
+    case "lupakan": {
+      const r = await lupakan(db, parsed.id);
+      return [r ? `Oke, udah gw lupain: "${r.isi}".` : `Memori nomor ${parsed.id} nggak ada. Ketik \`memori\` buat lihat daftarnya.`];
+    }
+    case "memori":
+      return cmdMemori(db);
+    case "reset_obrolan":
+      await hapusRiwayat(db, nomor);
+      return ["Oke, obrolan sama asisten dimulai dari nol. Memori jangka panjang tetap aman (`memori`)."];
     case "hutang_list":
       return cmdHutang(db, now);
     case "piutang_baru":
@@ -236,7 +270,8 @@ async function proses(db: Db, nomor: string, text: string, now: Date): Promise<s
     case "abaikan":
       return ["Nggak ada yang lagi nunggu konfirmasi. Ketik `bantuan` kalau butuh contoh."];
     default:
-      return [/^[a-z\s]+$/i.test(text.trim()) ? `Nominalnya berapa? Contoh: \`${text.trim()} 5k\`` : TAK_PAHAM];
+      if (catatanAI) return [`${catatanAI}\nSementara pakai perintah biasa dulu: \`tempe 5k\`, \`sisa\`, \`rekap\`, atau \`bantuan\`.`];
+      return [/^[a-z\s]+$/i.test(text.trim()) && text.trim().split(/\s+/).length <= 2 ? `Nominalnya berapa? Contoh: \`${text.trim()} 5k\`` : TAK_PAHAM];
   }
 }
 
@@ -281,8 +316,23 @@ async function jawabPending(db: Db, nomor: string, p: Pending, parsed: ParsedMes
       return null;
     case "kategori":
       if (parsed.type === "pilihan" && parsed.n <= PILIHAN_KATEGORI.length) return lanjutKategori(db, nomor, p, PILIHAN_KATEGORI[parsed.n - 1], now);
+      if (parsed.type === "ok" && p.saran) return lanjutKategori(db, nomor, p, p.saran.kode, now);
       if (batalin) return selesai(["Oke, nggak jadi dicatat."]);
       return null;
+    case "ai": {
+      if (batalin) return selesai(["Oke, usulannya gw buang."]);
+      const sebagian = /^(?:ok|oke|sip|gas|ya|iya|yes)\s+([\d\s,dan]+)$/i.exec(text.trim());
+      let pilih: AksiAI[] | null = null;
+      if (parsed.type === "ok") pilih = p.aksi;
+      else if (parsed.type === "pilihan" && parsed.n <= p.aksi.length) pilih = [p.aksi[parsed.n - 1]];
+      else if (sebagian) {
+        const no = [...new Set((sebagian[1].match(/\d+/g) ?? []).map(Number))].filter((n) => n >= 1 && n <= p.aksi.length);
+        if (no.length) pilih = no.map((n) => p.aksi[n - 1]);
+      }
+      if (!pilih) return null;
+      await clearPending(db, nomor);
+      return jalankanUsulan(db, nomor, pilih, now);
+    }
     case "tahan":
       if (parsed.type === "ok" || (parsed.type === "pilihan" && parsed.n === 1)) {
         const h = await createHold(db, { barang: p.barang, nominal: p.nominal, nomor, now });
@@ -323,12 +373,12 @@ async function jawabPending(db: Db, nomor: string, p: Pending, parsed: ParsedMes
       if (kode && p.hasil.total) {
         await clearPending(db, nomor);
         const nama = `Belanja ${p.hasil.toko ?? "struk"}`.trim();
-        return simpanItems(db, nomor, [{ nama, nominal: p.hasil.total, assumedThousand: false, kode }], "[struk]", now);
+        return simpanItems(db, nomor, [{ nama, nominal: p.hasil.total, assumedThousand: false, kode }], "[struk]", now, p.tanggal);
       }
       if (parsed.type === "rinci" && p.hasil.items.length) {
         await clearPending(db, nomor);
-        const items: ExpenseItem[] = p.hasil.items.map((i) => ({ nama: i.nama, nominal: i.harga, assumedThousand: false, kode: detectCategory(i.nama) ?? p.kode }));
-        return simpanItems(db, nomor, items, "[struk]", now);
+        const items: ExpenseItem[] = p.hasil.items.map((i, n) => ({ nama: i.nama, nominal: i.harga, assumedThousand: false, kode: p.kodeItem?.[n] ?? detectCategory(i.nama) ?? p.kode }));
+        return simpanItems(db, nomor, items, "[struk]", now, p.tanggal);
       }
       return null;
     }
@@ -360,14 +410,107 @@ async function jawabPending(db: Db, nomor: string, p: Pending, parsed: ParsedMes
   }
 }
 
+// ---------------------------------------------------------------- asisten AI
+
+/**
+ * Pesan ini sebaiknya dijawab asisten? Hanya kalau fitur pesan bebas nyala dan AI siap.
+ * Kalau AI sedang mati, pesan tetap diproses parser biasa dan diberi `catatan` kenapa AI tidak menjawab.
+ */
+async function keAsisten(db: Db, nomor: string, text: string, parsed: ParsedMessage, lanjutanUsulan: boolean, now: Date): Promise<{ ya: boolean; catatan?: string }> {
+  if (parsed.type !== "unknown" && parsed.type !== "expense") return { ya: false };
+  if ((await getSetting(db, "ai_pesan_bebas")) !== "1") return { ya: false };
+  const cocok =
+    lanjutanUsulan ||
+    kalimatBebas(text, parsed) ||
+    ((parsed.type === "unknown" || parsed.items.some((i) => i.kode === null)) && (await lagiNgobrol(db, nomor, now)));
+  if (!cocok) return { ya: false };
+  const st = await statusAI(db, now);
+  if (st.siap) return { ya: true };
+  return { ya: false, catatan: st.kondisi === "dimatikan" ? undefined : pesanAIMati(st.kondisi === "belum_dicek" || st.kondisi === "ok" ? "gagal" : st.kondisi) };
+}
+
+async function cmdTanya(db: Db, nomor: string, pertanyaan: string, now: Date): Promise<string[]> {
+  if (!pertanyaan) {
+    return ["Tanya apa aja soal duit lo. Contoh:\n• `tanya boleh beli sepatu 150rb?`\n• `tanya berapa jajan gw bulan ini?`\n• `tanya rencanain makan seminggu 140rb`"];
+  }
+  const r = await tanyaAsisten(db, { kanal: nomor, pesan: pertanyaan, now });
+  if (r.ok) return balasAsisten(db, nomor, r, now);
+  const baris = [pesanAIMati(r.alasan)];
+  const period = await getCurrentPeriod(db);
+  if (period) {
+    const [balances, daily] = await Promise.all([getBalances(db, period.id), getDailyStatus(db, now)]);
+    baris.push("", "Sementara, ini kondisi lo sekarang:", ringkasAmplop(balances));
+    if (daily) baris.push(statusJatah(daily));
+  }
+  return [baris.join("\n")];
+}
+
+async function balasAsisten(db: Db, nomor: string, r: Awaited<ReturnType<typeof tanyaAsisten>>, now: Date): Promise<string[]> {
+  const baris = [r.balasan];
+  if (r.memori.length) baris.push("", ...r.memori.map((m) => `(${m})`));
+  if (r.aksi.length) {
+    await setPending(db, nomor, { jenis: "ai", aksi: r.aksi }, now);
+    baris.push("", teksUsulan(r.aksi));
+  }
+  return [baris.join("\n")];
+}
+
+async function jalankanUsulan(db: Db, nomor: string, aksi: AksiAI[], now: Date): Promise<string[]> {
+  const r = await jalankanAksiAI(db, aksi, aktor(nomor), now);
+  const baris: string[] = [];
+  if (r.berhasil.length) baris.push("*Beres:*", ...r.berhasil.map((b) => `• ${b}`));
+  if (r.gagal.length) baris.push(...(r.berhasil.length ? [""] : []), "*Nggak bisa dijalankan:*", ...r.gagal.map((g) => `• ${g}`));
+  if (aksi.some((a) => a.jenis === "catat" || a.jenis === "pindah")) {
+    const d = await getDailyStatus(db, now);
+    if (d) baris.push("", statusJatah(d));
+  }
+  if (r.berhasil.length && aksi.some((a) => a.jenis !== "pesan_keluarga" && a.jenis !== "kata")) baris.push("Salah? Ketik `batal` buat membatalkan.");
+  if (aksi.some((a) => a.jenis === "pesan_keluarga")) baris.push("Pesan ke orang tua dikirim lewat antrean (nggak dikirim jam 22.00–06.00).");
+  return [baris.join("\n").trim()];
+}
+
+async function cmdIngat(db: Db, isi: string): Promise<string[]> {
+  try {
+    const m = await ingat(db, isi, "pengguna");
+    return [`Oke, gw inget: "${m.isi}" (no. ${m.id}). Asisten bakal pakai ini kalau ngasih saran.`];
+  } catch (e) {
+    return [e instanceof Error ? e.message : "Gagal menyimpan memori."];
+  }
+}
+
+async function cmdMemori(db: Db): Promise<string[]> {
+  const rows = await db.aiMemori.findMany({ orderBy: { id: "asc" } });
+  if (!rows.length) return ["Belum ada yang gw inget. Contoh: `ingat kado buat adik, ultah 20 Nov`."];
+  return [["*Yang gw inget tentang lo*", ...rows.map((m) => `${m.id}. ${m.isi}`), "", "Hapus pakai `lupakan <nomor>`."].join("\n")];
+}
+
 // ---------------------------------------------------------------- foto struk
 
 async function prosesGambar(db: Db, nomor: string, msg: IncomingMessage, now: Date): Promise<string[]> {
-  if (!(await getCurrentPeriod(db))) return [BELUM_ADA_PERIODE];
+  const period = await getCurrentPeriod(db);
+  if (!period) return [BELUM_ADA_PERIODE];
+  const buffer = await msg.gambar!();
+
+  // 1) Claude (lebih akurat, bisa baca bukti transfer juga)
+  if ((await getSetting(db, "ai_struk")) === "1" && (await statusAI(db, now)).siap) {
+    const { hasil: f } = await bacaFotoAI(db, buffer, now);
+    if (f?.jenis === "bukti_transfer") {
+      const panggilan = f.pengirim && /^(ayah|bapak|papa|abah|papi|bokap|ibu|mama|bunda|umi|mami|nyokap|emak)$/i.test(f.pengirim.trim()) ? f.pengirim : null;
+      const dari = namaPengirim(panggilan, await getSetting(db, "pengirim_default"));
+      return tawarkanKiriman(db, nomor, dari, f.nominal, now, `Bukti transfer ${rp(f.nominal)}${f.pengirim ? ` dari ${f.pengirim}` : ""} kebaca. Gw catat sebagai kiriman ${dari}.`);
+    }
+    if (f?.jenis === "lain") return [`${f.keterangan}\nKalau ini struk, coba foto ulang lebih terang & lurus. Atau ketik manual, mis. \`belanja indomaret 27.5k\`.`];
+    if (f?.jenis === "struk") {
+      const tanggal = f.tanggal && f.tanggal >= period.tanggalMulai && f.tanggal < wibDate(now) ? f.tanggal : undefined;
+      return tawarkanStruk(db, nomor, f.hasil, f.kode, now, { kodeItem: f.kodeItem, tanggal, olehAI: true });
+    }
+  }
+
+  // 2) OCR lokal
   const ocr = msg.ocr ?? (await import("../ocr/engine")).bacaTeksGambar;
   let teks = "";
   try {
-    teks = await ocr(await msg.gambar!());
+    teks = await ocr(buffer);
   } catch (e) {
     console.error("[bot] OCR gagal:", e);
   }
@@ -376,12 +519,17 @@ async function prosesGambar(db: Db, nomor: string, msg: IncomingMessage, now: Da
 
   const kategori = hasil.items.map((i) => detectCategory(i.nama)).filter(Boolean) as EnvelopeKode[];
   const kode: EnvelopeKode = kategori.length ? (["makan", "data", "darurat"] as EnvelopeKode[]).sort((a, b) => kategori.filter((k) => k === b).length - kategori.filter((k) => k === a).length)[0] : "makan";
-  await setPending(db, nomor, { jenis: "struk", hasil, kode }, now);
-  const baris = [`*Struk ${hasil.toko ?? ""}* terbaca: total ${rp(hasil.total)}${hasil.sumberTotal === "jumlah_item" ? " (dijumlah dari item)" : ""}.`];
+  return tawarkanStruk(db, nomor, hasil, kode, now, {});
+}
+
+async function tawarkanStruk(db: Db, nomor: string, hasil: HasilStruk, kode: EnvelopeKode, now: Date, o: { kodeItem?: EnvelopeKode[]; tanggal?: string; olehAI?: boolean }): Promise<string[]> {
+  if (!hasil.total) return ["Struknya nggak kebaca jelas."];
+  await setPending(db, nomor, { jenis: "struk", hasil, kode, kodeItem: o.kodeItem, tanggal: o.tanggal }, now);
+  const baris = [`*Struk ${hasil.toko ?? ""}* terbaca${o.olehAI ? " (dibaca AI)" : ""}: total ${rp(hasil.total)}${hasil.sumberTotal === "jumlah_item" ? " (dijumlah dari item)" : ""}${o.tanggal ? `, tanggal ${fmtTanggal(o.tanggal)}` : ""}.`];
   for (const i of hasil.items.slice(0, 12)) baris.push(`• ${i.nama} ${rp(i.harga)}`);
   if (hasil.items.length > 12) baris.push(`• … ${hasil.items.length - 12} item lagi`);
   baris.push("", `Balas "ok" buat catat ${rp(hasil.total)} ke ${NAMA_PENDEK[kode]}, angka buat pilih amplop lain:`, pilihanBernomor(PILIHAN_KATEGORI));
-  if (hasil.items.length > 1) baris.push(`Atau "rinci" buat catat per item (amplop ditebak per item).`);
+  if (hasil.items.length > 1) baris.push(`Atau "rinci" buat catat per item (amplop ${o.kodeItem ? "dari AI" : "ditebak"} per item).`);
   baris.push(`"batal" kalau salah baca.`);
   return [baris.join("\n")];
 }
@@ -732,11 +880,22 @@ async function putuskanTahan(db: Db, nomor: string, id: number, keputusan: "beli
 // ---------------------------------------------------------------- catat pengeluaran
 
 async function catat(db: Db, nomor: string, items: ExpenseItem[], raw: string, now: Date, tanggal?: string): Promise<string[]> {
-  if (items.some((i) => i.kode === null)) {
-    await setPending(db, nomor, { jenis: "kategori", items, raw, tanggal }, now);
-    return [pertanyaanKategori(items)];
-  }
+  if (items.some((i) => i.kode === null)) return tanyaKategori(db, nomor, { jenis: "kategori", items, raw, tanggal }, now);
   return simpanAtauTahan(db, nomor, items, raw, now, tanggal);
+}
+
+/** Tanya amplop untuk item pertama yang belum jelas; kalau AI aktif, sertakan tebakannya. */
+async function tanyaKategori(db: Db, nomor: string, p: Extract<Pending, { jenis: "kategori" }>, now: Date): Promise<string[]> {
+  const item = p.items.find((i) => i.kode === null)!;
+  let saran: { kode: EnvelopeKode; kata: string } | undefined;
+  if ((await getSetting(db, "ai_tebak_kategori")) === "1" && (await statusAI(db, now)).siap) {
+    saran = (await tebakKategoriAI(db, item.nama, now)) ?? undefined;
+  }
+  await setPending(db, nomor, { ...p, saran }, now);
+  if (saran) {
+    return [`"${item.nama}" ${rp(item.nominal)} kayaknya masuk *${NAMA_PENDEK[saran.kode]}* (tebakan AI).\nBalas "ok" kalau bener, atau pilih amplop lain:\n${pilihanBernomor(PILIHAN_KATEGORI)}`];
+  }
+  return [pertanyaanKategori(p.items)];
 }
 
 /** Pembelian non-rutin (satu item Darurat di atas batas) masuk mode tahan belanja dulu. */
@@ -755,11 +914,12 @@ function pertanyaanKategori(items: ExpenseItem[]): string {
 
 async function lanjutKategori(db: Db, nomor: string, p: Extract<Pending, { jenis: "kategori" }>, kode: EnvelopeKode, now: Date): Promise<string[]> {
   const items = p.items.map((i) => ({ ...i }));
-  items.find((i) => i.kode === null)!.kode = kode;
-  if (items.some((i) => i.kode === null)) {
-    await setPending(db, nomor, { ...p, items }, now);
-    return [pertanyaanKategori(items)];
-  }
+  const item = items.find((i) => i.kode === null)!;
+  item.kode = kode;
+  // belajar: lain kali kata ini langsung masuk amplop yang sama
+  if (p.saran && p.saran.kode === kode) await ajariKata(db, p.saran.kata, kode, "ai");
+  else await ajariKata(db, item.nama, kode, "pengguna");
+  if (items.some((i) => i.kode === null)) return tanyaKategori(db, nomor, { ...p, items, saran: undefined }, now);
   await clearPending(db, nomor);
   return simpanAtauTahan(db, nomor, items, p.raw, now, p.tanggal);
 }

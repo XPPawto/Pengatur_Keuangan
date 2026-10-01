@@ -107,6 +107,10 @@ async function jalankan(db: Db, u: Undo, now: Date) {
     case "jalankan_saran":
       await db.transfer.deleteMany({ where: { id: { in: u.transferIds } } });
       return;
+    case "hapus_belanja":
+      await db.shoppingCheck.deleteMany({ where: { itemId: { in: u.ids } } });
+      await db.shoppingItem.deleteMany({ where: { id: { in: u.ids } } });
+      return;
     case "tanpa_jajan_off":
       await db.dailyLog.updateMany({ where: { tanggal: u.tanggal }, data: { tanpaJajan: u.sebelum } });
       await syncDailyLog(db, u.tanggal, now);

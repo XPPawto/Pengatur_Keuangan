@@ -163,6 +163,10 @@ export class BaileysDriver implements GatewayDriver {
     await this.sock.sendMessage(`${normalizePhone(nomor)}@s.whatsapp.net`, { text });
   }
 
+  async mengetik(nomor: string) {
+    await this.sock?.sendPresenceUpdate("composing", `${normalizePhone(nomor)}@s.whatsapp.net`);
+  }
+
   async stop() {
     this.generation++;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);

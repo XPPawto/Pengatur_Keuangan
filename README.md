@@ -3,7 +3,7 @@
 Website + bot WhatsApp untuk mengatur uang mingguan Rp300.000 dengan **sistem amplop**: Makan, Paket data, Paylater, Tabungan kado, dan Darurat & kos.
 Catat dari WhatsApp (`tempe 5k`), langsung dibalas sisa uang dan jatah makan hari ini. Website untuk gambaran besar, anggaran, tagihan, target, belanja, dan rekap.
 
-Semua fase PRD (1–3) sudah dikerjakan, ditambah fitur lanjutan: **undo untuk semua aksi & riwayat aktivitas**, **rekonsiliasi dengan uang asli**, **kiriman Ayah di luar uang mingguan**, **autopilot** (proyeksi, simulasi "kalau…", saran sekali `ok`, deteksi pola), **hutang-piutang & patungan**, **skor/level/lencana**, **foto struk dibaca otomatis (OCR lokal, gratis)**, **harga yang belajar sendiri**, **kesehatan sistem + alarm**, laporan untuk orang tua, login kode WhatsApp, dan CI. Tanpa layanan berbayar.
+Semua fase PRD (1–3) sudah dikerjakan, ditambah fitur lanjutan: **undo untuk semua aksi & riwayat aktivitas**, **rekonsiliasi dengan uang asli**, **kiriman Ayah di luar uang mingguan**, **autopilot** (proyeksi, simulasi "kalau…", saran sekali `ok`, deteksi pola), **hutang-piutang & patungan**, **skor/level/lencana**, **foto struk dibaca otomatis (OCR lokal, gratis)**, **harga yang belajar sendiri**, **kesehatan sistem + alarm**, laporan untuk orang tua, login kode WhatsApp, dan CI. Plus **asisten AI Claude** yang memakai langganan Claude Pro lo sendiri lewat Claude Code (tanpa API key, tanpa tagihan per token) dan **peta koneksi** WhatsApp + Claude. Tanpa layanan berbayar tambahan.
 
 ---
 
@@ -20,6 +20,7 @@ Semua fase PRD (1–3) sudah dikerjakan, ditambah fitur lanjutan: **undo untuk s
 9. [Aturan hitung](#9-aturan-hitung)
 10. [Backup & ekspor](#10-backup--ekspor)
 11. [Untuk developer](#11-untuk-developer)
+12. [Asisten AI (Claude, pakai langganan)](#12-asisten-ai-claude-pakai-langganan)
 
 ---
 
@@ -41,13 +42,14 @@ Semua fase PRD (1–3) sudah dikerjakan, ditambah fitur lanjutan: **undo untuk s
 | Hutang-piutang | Uang di teman & utang lo, catat/bayar sebagian/lunas, patungan bagi rata |
 | Prestasi | Skor mingguan 0–100, level & XP, tantangan otomatis, 10 lencana, riwayat skor |
 | Aktivitas | Jejak semua perubahan (siapa, kapan, dari WA/web) dan tombol Batalkan untuk tiap aksi |
-| Kesehatan sistem | Status bot, WhatsApp, antrean pesan, backup, penyimpanan; endpoint `/api/health` |
-| Koneksi WhatsApp | Status real-time, pairing lewat QR atau kode, putuskan, riwayat koneksi |
+| Asisten AI | Chat dengan Claude soal duit lo (pertanyaan, rencana menu, kenapa boros, target kado, draf pesan ke ortu), usulan aksi yang dijalankan setelah disetujui, memori, kata yang dipelajari, saklar fitur & batas harian |
+| Kesehatan sistem | Status bot, WhatsApp, antrean pesan, backup, penyimpanan, asisten AI; endpoint `/api/health` |
+| Koneksi | **Peta node** DompetKos ↔ WhatsApp (nomor pemilik, keluarga, antrean) ↔ Claude (fitur AI), garis bergerak saat tersambung, bisa digeser & zoom; pairing WhatsApp (QR/kode); token Claude; **pemakaian Claude** (panggilan, token, waktu jawab, grafik harian, log) |
 | Pengaturan | Nomor penerima & perannya, jadwal pengingat, nama, batas tahan belanja, login kode WA, ekspor Excel/CSV, backup & unduh backup, antrean pesan otomatis |
 
 Semua grafik punya tooltip saat disentuh dan tampilan tabel. Transaksi dari WhatsApp muncul di website dalam ±4 detik tanpa refresh.
 
-**Bot WhatsApp**: catat bebas format, tanya balik kalau kategori tidak jelas, jatah harian otomatis, pindah amplop, bayar tagihan, tahan belanja, rekap, target, daftar belanja & menu, pengingat terjadwal, laporan sopan untuk orang tua.
+**Bot WhatsApp**: catat bebas format, tanya balik kalau kategori tidak jelas (atau ditebak AI, lalu bot belajar), jatah harian otomatis, pindah amplop, bayar tagihan, tahan belanja, rekap, target, daftar belanja & menu, pengingat terjadwal, laporan sopan untuk orang tua.
 
 ## 2. Install
 
@@ -81,6 +83,9 @@ npm run set-password passwordBaruMinimal8
 | `WA_SESSION_DIR` | Folder sesi WhatsApp. Default `./data/wa-session` |
 | `BACKUP_DIR` | Folder backup. Default `./data/backups` |
 | `COOKIE_SECURE` | Isi `1` kalau website dibuka lewat HTTPS |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Opsional. Token `claude setup-token` untuk asisten AI. Lebih praktis ditempel di website (Koneksi → Claude, disimpan terenkripsi) |
+| `CLAUDE_BIN` | Opsional. Lokasi perintah `claude` kalau tidak ada di PATH |
+| `AI_CONFIG_DIR` | Opsional. Folder konfigurasi Claude Code khusus bot. Default `./data/claude-config` |
 
 `.env` dan folder `data/` (database, sesi WhatsApp, backup) tidak pernah masuk git.
 
@@ -118,7 +123,7 @@ DATABASE_URL="file:../data/demo.db" npm run dev
 ## 5. Menyambungkan WhatsApp (dari website)
 
 1. Jalankan web + bot. Kalau bot mati atau WhatsApp terputus, semua halaman menampilkan banner merah.
-2. Login → menu **Koneksi WhatsApp**.
+2. Login → menu **Koneksi** (peta koneksi + panel WhatsApp).
 3. **Hubungkan lewat QR**: di HP bot buka WhatsApp → *Perangkat tertaut* → *Tautkan perangkat* → scan. QR diperbarui otomatis.
    Atau **Pakai kode pairing**: isi nomor bot, ketik kode 8 huruf di *Tautkan dengan nomor telepon*.
 4. Status berubah jadi **Terhubung** tanpa refresh. Kirim `bantuan` dari nomor pemilik.
@@ -188,7 +193,7 @@ Semua bisa dinyalakan/dimatikan per nomor di **Pengaturan → Nomor WhatsApp**, 
 | Setiap hari 21.00 | "Udah catat?" — hanya kalau belum ada catatan | Pemilik |
 | H-3 & H-1 jatuh tempo, 09.00 | Tagihan: nominal, saldo amplop, cukup/kurang | Pemilik |
 | Sabtu 19.00 | Saran autopilot (balas `ok` untuk jalankan) | Pemilik |
-| Sabtu 20.00 | Rekap mingguan + skor + piutang yang belum kembali | Pemilik |
+| Sabtu 20.00 | Rekap mingguan + skor + piutang yang belum kembali, plus evaluasi & tantangan dari asisten AI (kalau aktif) | Pemilik |
 | Sabtu 20.00 | Laporan keluarga | Keluarga |
 | 24 jam setelah tahan belanja | "Masih mau beli?" | Yang meminta |
 
@@ -223,8 +228,9 @@ Aturan anti-spam: **tidak ada pesan 22.00–06.00**, **maksimal 1 pesan otomatis
 ## 11. Untuk developer
 
 ```bash
-npm test           # 211 tes: parser, jatah, aturan potong, alur bot, keluarga, penjadwal, aturan kirim,
-                   # undo, rekonsiliasi, kiriman, hutang-piutang, autopilot, skor, struk, ekspor, backup, OTP
+npm test           # 243 tes: parser, jatah, aturan potong, alur bot, keluarga, penjadwal, aturan kirim,
+                   # undo, rekonsiliasi, kiriman, hutang-piutang, autopilot, skor, struk, ekspor, backup, OTP,
+                   # asisten AI (runner CLI, kuota, status, usulan, memori, foto, review) — tanpa memanggil Claude asli
 npm run typecheck
 npm run db:seed    # isi ulang data awal (aman diulang)
 npm run db:reset   # HAPUS semua data lalu seed ulang
@@ -241,9 +247,55 @@ src/lib/whatsapp/             WhatsAppGateway, driver Baileys, manager (web ↔ 
 src/app/                      website Next.js (App Router) + API /api/wa/*, /api/export/*, /api/backup
 src/components/               UI: ikon SVG, grafik, form
 src/lib/ocr/                  parser struk (fungsi murni) + mesin OCR lokal
+src/lib/ai/                   asisten AI: runner `claude -p`, penjaga kuota/status, konteks data, prompt, aksi
 bot/index.ts                  proses bot: WhatsApp, penjadwal tiap menit, pengirim antrean, backup, alarm kesehatan
 .github/workflows/ci.yml      typecheck + tes + build di setiap PR
 tests/                        vitest (database sementara, tidak menyentuh data asli)
 ```
 
 Website dan bot tidak menghitung sendiri; keduanya memanggil service layer yang sama dan membaca database yang sama. Website ↔ bot berkomunikasi lewat tabel (`wa_command`, `outbox`), tanpa layanan pihak ketiga. Tidak ada analytics, iklan, atau layanan berbayar.
+
+## 12. Asisten AI (Claude, pakai langganan)
+
+Asisten memakai **Claude lewat Claude Code CLI** (`claude -p`) yang login dengan **token langganan Claude Pro/Max lo sendiri**. Tidak ada API key dan tidak ada tagihan per token; pemakaiannya masuk ke batas langganan yang sama dengan claude.ai. Fitur ini opsional: tanpa token, semua fitur lain jalan seperti biasa.
+
+**Pasang (sekali):**
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash   # pasang Claude Code di server/laptop yang menjalankan DompetKos
+claude setup-token                               # login di browser pakai akun Claude Pro, salin token yang muncul
+```
+
+Tempel token di website → **Koneksi → Claude** → *Simpan & tes*. Status berubah jadi **Aktif**.
+
+**Server dipakai bareng orang lain?** Aman dari login/logout orang lain:
+
+- Bot memakai token miliknya sendiri dan folder konfigurasi khusus (`data/claude-config`), jadi `claude` login/logout di terminal oleh siapa pun tidak berpengaruh, dan bot tidak pernah memakai akun orang lain.
+- Proses `claude` dijalankan dengan lingkungan bersih: `ANTHROPIC_API_KEY` tidak pernah diteruskan, jadi tidak mungkin tertagih API.
+- Semua tool Claude Code dimatikan (kecuali membaca foto yang dikirim), folder kerjanya di luar repo, dan data keuangan dikirim lewat stdin (tidak terlihat di `ps`).
+- Token disimpan terenkripsi (kunci dari `SESSION_SECRET`) dan hanya ditampilkan 4 karakter terakhir. Tetap: jalankan DompetKos dengan user Linux sendiri dan `chmod 600 .env` / `chmod 700 data`. Siapa pun yang punya akses root tetap bisa membaca apa saja di server.
+- Token ini untuk pemakaian pribadi lo. Jangan dibagikan atau dipakai melayani orang lain.
+
+**Yang bisa dilakukan** (WhatsApp dan halaman **Asisten AI**):
+
+| Contoh | Hasil |
+| --- | --- |
+| `berapa total jajan gw bulan september?` · `kapan terakhir beli galon?` | Dijawab dari data asli (angka dihitung sistem, bukan dikarang) |
+| `boleh beli sepatu 150rb ga?` | Pertimbangan dengan tagihan, sisa amplop, target kado |
+| `tadi geprek 15 sama es teh 5, kemarin bensin 10` | Dipecah jadi beberapa catatan → usulan → `ok` / `ok 1 3` / `batal` |
+| `kenapa minggu ini boros?` | Penyebab dengan angka + usulan pindah uang |
+| `rencanain makan seminggu budget 140rb` | Rencana menu + usulan masuk daftar belanja |
+| `target kado gw aman?` | Status jalur + harus nyisihin berapa per minggu |
+| `bantu bilang ke ayah butuh 100rb buat praktikum` | Draf pesan sopan → setelah `ok` dikirim ke nomor ortu |
+| Foto struk / bukti transfer | Dibaca Claude (fallback OCR lokal); bukti transfer langsung ditawarkan sebagai kiriman |
+| `ingat kado buat adik` · `memori` · `lupakan 2` · `reset obrolan` | Memori jangka panjang (juga bisa diedit di website) |
+
+Kalimat yang dipahami perintah biasa tetap diproses instan tanpa AI (hemat kuota). Kata baru (mis. "seblak") ditebak amplopnya oleh AI dengan model ringan, lalu **dipelajari**: lain kali langsung dikenali tanpa AI. Rekap Sabtu mendapat evaluasi & satu tantangan minggu depan.
+
+**Aturan main:**
+
+- AI **tidak bisa mengubah data sendiri**. Semua aksi (catat, pindah, daftar belanja, pesan ke ortu) hanya usulan, jalan setelah `ok`, tercatat di Aktivitas, dan bisa di-`batal`. Usulan divalidasi ulang di server (nominal wajar, amplop valid, tabungan kado tidak boleh diambil).
+- Nomor keluarga **tidak pernah** dilayani AI.
+- **Kalau Claude mati** (token kedaluwarsa/dicabut, kena batas langganan, Claude Code belum terpasang): bot tetap jalan normal, fitur AI istirahat, pemilik dikabari **sekali** lewat WhatsApp, dan bot mengecek ulang tiap 30 menit. Begitu pulih (token baru ditempel atau batas reset), AI nyala sendiri dan pemilik dikabari.
+- **Batas harian** (default 40 panggilan), pilihan model (utama & ringan), dan saklar tiap fitur ada di halaman Asisten. Pemakaian rinci (panggilan, token, waktu jawab, log) di halaman Koneksi. Sisa batas langganan dari Claude sendiri dilihat di claude.ai → Settings → Usage.
+

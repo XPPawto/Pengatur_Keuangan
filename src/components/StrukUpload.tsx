@@ -12,7 +12,7 @@ const AMPLOP = [
   { kode: "darurat", nama: "Darurat" },
 ];
 
-/** Foto struk → OCR lokal → konfirmasi → dicatat (sekaligus atau per item). */
+/** Foto struk → Claude (atau OCR lokal) → konfirmasi → dicatat (sekaligus atau per item). */
 export default function StrukUpload() {
   const [baca, bacaAction, membaca] = useActionState<StrukState, FormData>(bacaStrukAction, {});
   const [simpan, simpanAction, menyimpan] = useActionState<StrukState, FormData>(simpanStrukAction, {});
@@ -27,15 +27,17 @@ export default function StrukUpload() {
           Pilih / ambil foto
           <input type="file" name="foto" accept="image/*" capture="environment" className="sr-only" onChange={(e) => e.currentTarget.form?.requestSubmit()} />
         </label>
-        {membaca && <span className="flex items-center gap-2 text-sm text-muted"><Icon name="refresh" size={15} className="animate-spin" />Membaca struk…</span>}
+        {membaca && <span className="flex items-center gap-2 text-sm text-muted"><Icon name="refresh" size={15} className="animate-spin" />Membaca struk… (pakai AI bisa sampai 30 detik)</span>}
       </form>
       {baca.error && <Alert tone="bad">{baca.error}</Alert>}
+      {baca.info && <Alert tone="info">{baca.info}</Alert>}
       {simpan.ok && <Alert tone="ok">{simpan.ok}</Alert>}
       {simpan.error && <Alert tone="bad">{simpan.error}</Alert>}
       {h && !simpan.ok && (
         <form action={simpanAction} className="space-y-3 rounded-xl border border-line p-3">
           <p className="text-sm">
             <b>{h.toko ?? "Struk"}</b> · total <b className="num">{rp(h.total ?? 0)}</b> · {h.items.length} item
+            {baca.olehAI && <span className="ml-2 inline-flex items-center gap-1 text-xs text-brand"><Icon name="bot" size={13} />dibaca AI</span>}
           </p>
           <div role="tablist" className="grid grid-cols-2 gap-1 rounded-lg bg-subtle p-1 text-sm">
             <button type="button" role="tab" aria-selected={mode === "total"} onClick={() => setMode("total")} className={`min-h-8 rounded-md ${mode === "total" ? "bg-card shadow-sm" : "text-muted"}`}>
@@ -59,7 +61,7 @@ export default function StrukUpload() {
               <input name="catatan" defaultValue={`Belanja ${h.toko ?? ""}`.trim()} className="input-sm col-span-2" aria-label="Catatan" />
             </div>
           ) : (
-            <ItemEditor items={h.items} saran={baca.saranKode ?? "makan"} />
+            <ItemEditor key={JSON.stringify(h)} items={h.items} saran={baca.saranKode ?? "makan"} kodeItem={baca.kodeItem} />
           )}
           <button className="btn w-full" disabled={menyimpan}>
             <Icon name="check" size={17} />
@@ -71,8 +73,8 @@ export default function StrukUpload() {
   );
 }
 
-function ItemEditor({ items, saran }: { items: { nama: string; harga: number }[]; saran: string }) {
-  const [rows, setRows] = useState(items.map((i) => ({ ...i, kode: saran })));
+function ItemEditor({ items, saran, kodeItem }: { items: { nama: string; harga: number }[]; saran: string; kodeItem?: string[] }) {
+  const [rows, setRows] = useState(items.map((i, n) => ({ ...i, kode: kodeItem?.[n] ?? saran })));
   return (
     <>
       <input type="hidden" name="items" value={JSON.stringify(rows)} />

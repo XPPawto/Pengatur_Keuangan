@@ -9,8 +9,8 @@ export const metadata = { title: "Kesehatan sistem" };
 
 const TONE: Record<Status, "ok" | "warn" | "bad"> = { ok: "ok", peringatan: "warn", masalah: "bad" };
 const LABEL: Record<Status, string> = { ok: "Sehat", peringatan: "Perlu perhatian", masalah: "Bermasalah" };
-const IKON: Record<string, IconName> = { bot: "pulse", wa: "message", antrean: "send", backup: "database", disk: "file" };
-const LINK: Record<string, string> = { wa: "/whatsapp", antrean: "/pengaturan", backup: "/pengaturan" };
+const IKON: Record<string, IconName> = { bot: "pulse", wa: "message", antrean: "send", backup: "database", disk: "file", ai: "sparkles" };
+const LINK: Record<string, string> = { wa: "/koneksi#whatsapp", antrean: "/pengaturan", backup: "/pengaturan", ai: "/koneksi#claude" };
 
 export default async function SistemPage() {
   const h = await cekKesehatan(prisma, new Date());

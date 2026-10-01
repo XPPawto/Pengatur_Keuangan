@@ -58,7 +58,8 @@ export type Undo =
     }
   | { t: "pemasukan"; periodId: number; pemasukanSebelum: number; alokasiSebelum: Record<string, number> }
   | { t: "batal_patungan"; txIds: number[]; debtIds: number[] }
-  | { t: "jalankan_saran"; transferIds: number[] };
+  | { t: "jalankan_saran"; transferIds: number[] }
+  | { t: "hapus_belanja"; ids: number[] };
 
 export function snapTx(t: {
   id: number;

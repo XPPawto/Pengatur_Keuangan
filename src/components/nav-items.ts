@@ -14,6 +14,7 @@ export const NAV_GROUPS: { judul: string; items: NavItem[] }[] = [
       { href: "/", label: "Beranda", icon: "home", deskripsi: "Jatah makan, amplop, tagihan terdekat" },
       { href: "/catat", label: "Catat", icon: "plus-circle", deskripsi: "Catat pengeluaran cepat" },
       { href: "/riwayat", label: "Riwayat", icon: "receipt", deskripsi: "Semua transaksi per periode" },
+      { href: "/asisten", label: "Asisten AI", icon: "bot", deskripsi: "Tanya apa aja, rencana menu, review, memori" },
     ],
   },
   {
@@ -37,7 +38,7 @@ export const NAV_GROUPS: { judul: string; items: NavItem[] }[] = [
   {
     judul: "Sistem",
     items: [
-      { href: "/whatsapp", label: "Koneksi WhatsApp", icon: "message", deskripsi: "Pairing QR / kode, status bot" },
+      { href: "/koneksi", label: "Koneksi", icon: "link", deskripsi: "Peta WhatsApp + Claude, pairing, token, pemakaian AI" },
       { href: "/aktivitas", label: "Aktivitas", icon: "undo", deskripsi: "Siapa mengubah apa, batalkan aksi" },
       { href: "/sistem", label: "Kesehatan sistem", icon: "pulse", deskripsi: "Status bot, antrean, backup, penyimpanan" },
       { href: "/pengaturan", label: "Pengaturan", icon: "settings", deskripsi: "Nomor, pengingat, ekspor, backup" },

@@ -364,3 +364,49 @@ model ExtraIncome {
 
   @@index([periodId])
 }
+
+// ---------------------------------------------------------------- Asisten AI (Claude Code CLI, token langganan)
+
+// Log setiap pemanggilan AI. fitur: chat_web | chat_wa | struk | kategori | review | cek
+// status: ok | belum_login | limit | timeout | tidak_ada | sibuk | gagal
+model AiCall {
+  id       Int      @id @default(autoincrement())
+  waktu    DateTime @default(now())
+  fitur    String
+  model    String
+  status   String
+  durasiMs Int      @default(0)
+  // token yang dilaporkan Claude Code (masuk = input + cache)
+  tokenMasuk  Int     @default(0)
+  tokenKeluar Int     @default(0)
+  catatan  String?
+
+  @@index([waktu])
+}
+
+// Riwayat obrolan dengan asisten supaya percakapan nyambung. kanal: nomor WA atau "web". peran: user | asisten
+model AiChat {
+  id    Int      @id @default(autoincrement())
+  kanal String
+  peran String
+  isi   String
+  waktu DateTime @default(now())
+
+  @@index([kanal, waktu])
+}
+
+// Hal-hal yang diingat asisten tentang pemilik (bisa dilihat & dihapus di website). sumber: pengguna | asisten
+model AiMemori {
+  id         Int      @id @default(autoincrement())
+  isi        String
+  sumber     String   @default("pengguna")
+  dibuatPada DateTime @default(now())
+}
+
+// Kata yang dipelajari bot → amplop (dari pilihan pengguna atau tebakan AI yang disetujui). sumber: pengguna | ai
+model KataKategori {
+  kata         String   @id
+  envelopeKode String
+  sumber       String   @default("pengguna")
+  dibuatPada   DateTime @default(now())
+}

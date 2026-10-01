@@ -18,7 +18,7 @@ export default async function WaBanner() {
     <div role="alert" className="sticky top-0 z-20 flex items-center justify-center gap-2 bg-[#b42318] px-4 py-2 text-center text-[13px] font-medium text-white">
       <Icon name="link-off" size={16} className="shrink-0" />
       <span>{pesan}</span>
-      <Link href="/whatsapp" className="shrink-0 font-semibold underline underline-offset-2">
+      <Link href="/koneksi#whatsapp" className="shrink-0 font-semibold underline underline-offset-2">
         Buka koneksi
       </Link>
     </div>
