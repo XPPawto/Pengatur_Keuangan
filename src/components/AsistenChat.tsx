@@ -6,6 +6,7 @@ import type { AksiAI } from "@/lib/ai/asisten";
 import type { KodePenyedia, OpsiPenyedia } from "@/lib/ai/model";
 import { rp } from "@/lib/money";
 import { Icon, type IconName } from "./icons";
+import { LogoPenyedia } from "./LogoAI";
 
 interface Pesan {
   peran: "user" | "asisten" | "sistem";
@@ -166,7 +167,7 @@ export default function AsistenChat({ riwayat, siap, pesanMati, opsi }: { riwaya
                 </div>
                 {m.penyedia && (m.dipilih || m.penyedia !== "claude") && !m.gagal && (
                   <p className="flex items-center gap-1.5 text-xs text-muted">
-                    <Icon name="transfer" size={13} />
+                    {m.penyedia === "claude" || m.penyedia === "gemini" || m.penyedia === "openrouter" ? <LogoPenyedia penyedia={m.penyedia} size={13} /> : <Icon name="transfer" size={13} />}
                     Dijawab lewat {NAMA_PENYEDIA[m.penyedia] ?? m.penyedia}
                     {m.model ? ` · ${m.model}` : ""}
                     {m.dipilih ? "" : " (cadangan)"}

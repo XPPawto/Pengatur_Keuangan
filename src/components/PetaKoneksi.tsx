@@ -4,12 +4,18 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { DataKoneksi } from "@/lib/services/koneksi";
 import { Icon, Logo, type IconName } from "./icons";
+import { LogoClaude, LogoPenyedia } from "./LogoAI";
 import { useWidth } from "./charts/useWidth";
-import { useDenyut, type LogLive } from "./useDenyut";
+import { useDenyut, WARNA_PENYEDIA, type LogLive } from "./useDenyut";
 
 type IdFitur = "chat_web" | "chat_wa" | "struk" | "review" | "kategori";
-type IdNode = "hub" | "wa" | "pemilik" | "keluarga" | "antrean" | "claude" | "gemini" | "openrouter" | IdFitur | "fitur";
-type Gaya = "aktif" | "claude" | "pakai" | "tunggu" | "putus" | "biasa" | "redup";
+type IdPenyedia = "claude" | "gemini" | "openrouter";
+type IdNode = "hub" | "wa" | "pemilik" | "keluarga" | "antrean" | IdPenyedia | IdFitur | "fitur";
+type Gaya = "aktif" | IdPenyedia | "pakai_claude" | "pakai_gemini" | "pakai_openrouter" | "tunggu" | "putus" | "biasa" | "redup" | "sembunyi";
+
+const PENYEDIA: IdPenyedia[] = ["claude", "gemini", "openrouter"];
+const FITUR: IdFitur[] = ["chat_web", "chat_wa", "struk", "kategori", "review"];
+const isPenyedia = (id: string): id is IdPenyedia => (PENYEDIA as string[]).includes(id);
 
 interface Tata {
   w: number;
@@ -29,52 +35,60 @@ const SISI_INTI: [IdNode, IdNode][] = [
   ["hub", "openrouter"],
 ];
 
-/** Tata letak lebar (desktop) dan sempit (HP). Koordinat = titik tengah node. */
+/**
+ * Tata letak lebar (desktop): kolom WhatsApp — DompetKos — penyedia AI — fitur AI.
+ * Setiap penyedia (Claude & cadangan) tersambung ke semua fitur, karena fitur mana pun bisa dijawab penyedia mana pun.
+ * Koordinat = titik tengah node.
+ */
 const LEBAR: Tata = {
-  w: 1100,
+  w: 1250,
   h: 630,
   arah: "datar",
   pos: {
-    hub: [540, 300],
-    wa: [290, 200],
-    pemilik: [115, 75],
-    keluarga: [115, 350],
-    antrean: [300, 485],
-    claude: [780, 200],
-    chat_web: [985, 70],
-    chat_wa: [990, 250],
-    struk: [980, 400],
-    review: [800, 490],
-    kategori: [590, 480],
-    gemini: [560, 70],
-    openrouter: [470, 585],
+    pemilik: [100, 80],
+    wa: [270, 215],
+    keluarga: [100, 380],
+    antrean: [290, 520],
+    hub: [500, 315],
+    claude: [790, 140],
+    gemini: [790, 315],
+    openrouter: [790, 490],
+    chat_web: [1130, 70],
+    chat_wa: [1130, 190],
+    struk: [1130, 315],
+    kategori: [1130, 440],
+    review: [1130, 560],
   },
-  sisi: [...SISI_INTI, ["claude", "chat_web"], ["claude", "chat_wa"], ["claude", "struk"], ["claude", "review"], ["claude", "kategori"]],
+  sisi: [...SISI_INTI, ...PENYEDIA.flatMap((p) => FITUR.map((f): [IdNode, IdNode] => [p, f]))],
 };
 
-/** Layar sempit: fitur AI digabung jadi satu kartu daftar supaya garis tidak saling silang. */
+/** Layar sempit: fitur AI digabung jadi satu kartu daftar, tiga penyedia sebaris di bawahnya. */
 const SEMPIT: Tata = {
   w: 420,
   h: 810,
   arah: "tegak",
   pos: {
     fitur: [210, 100],
-    claude: [110, 265],
-    gemini: [315, 240],
-    openrouter: [315, 305],
+    claude: [72, 268],
+    gemini: [210, 268],
+    openrouter: [348, 268],
     hub: [210, 405],
     wa: [210, 520],
     pemilik: [102, 635],
     keluarga: [318, 635],
     antrean: [210, 750],
   },
-  sisi: [...SISI_INTI, ["claude", "fitur"]],
+  sisi: [...SISI_INTI, ...PENYEDIA.map((p): [IdNode, IdNode] => [p, "fitur"])],
 };
 
-const WARNA_GARIS: Record<Gaya, { stroke: string; lebar: number; putus?: string; alir?: boolean; op?: number }> = {
+const WARNA_GARIS: Record<Exclude<Gaya, "sembunyi">, { stroke: string; lebar: number; putus?: string; alir?: boolean; op?: number }> = {
   aktif: { stroke: "var(--ok)", lebar: 2.2, alir: true },
-  claude: { stroke: "var(--claude)", lebar: 2.2, alir: true },
-  pakai: { stroke: "var(--claude)", lebar: 1.6, op: 0.75 },
+  claude: { stroke: WARNA_PENYEDIA.claude, lebar: 2.2, alir: true },
+  gemini: { stroke: WARNA_PENYEDIA.gemini, lebar: 2.2, alir: true },
+  openrouter: { stroke: WARNA_PENYEDIA.openrouter, lebar: 2.2, alir: true },
+  pakai_claude: { stroke: WARNA_PENYEDIA.claude, lebar: 1.6, op: 0.75 },
+  pakai_gemini: { stroke: WARNA_PENYEDIA.gemini, lebar: 1.6, op: 0.75 },
+  pakai_openrouter: { stroke: WARNA_PENYEDIA.openrouter, lebar: 1.6, op: 0.75 },
   tunggu: { stroke: "var(--warn)", lebar: 1.8, putus: "5 5" },
   putus: { stroke: "var(--bad)", lebar: 1.6, putus: "4 6", op: 0.8 },
   biasa: { stroke: "var(--line-strong)", lebar: 1.4 },
@@ -82,28 +96,6 @@ const WARNA_GARIS: Record<Gaya, { stroke: string; lebar: number; putus?: string;
 };
 
 const IKON_FITUR: Record<string, IconName> = { chat_web: "bot", chat_wa: "message", struk: "camera", review: "chart", kategori: "brain" };
-
-/** Tanda Claude (starburst sederhana), digambar sendiri sebagai SVG. */
-// koordinat dibulatkan supaya HTML server & browser identik (hindari hydration mismatch)
-const SINAR = Array.from({ length: 12 }, (_, i) => {
-  const a = (i * Math.PI) / 6;
-  const r1 = i % 2 ? 3.2 : 2.4;
-  const r2 = i % 2 ? 8.6 : 10.5;
-  const b = (v: number) => Math.round(v * 100) / 100;
-  return [b(12 + r1 * Math.cos(a)), b(12 + r1 * Math.sin(a)), b(12 + r2 * Math.cos(a)), b(12 + r2 * Math.sin(a))];
-});
-
-function TandaClaude({ size = 18 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
-      <g stroke="var(--claude)" strokeWidth="2.4" strokeLinecap="round">
-        {SINAR.map(([x1, y1, x2, y2], i) => (
-          <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} />
-        ))}
-      </g>
-    </svg>
-  );
-}
 
 function samarNomor(n: string | null) {
   if (!n) return "nomor belum ada";
@@ -134,7 +126,7 @@ interface Node {
 function bangunNode(d: DataKoneksi): Record<IdNode, Node> {
   const waNada = d.wa.status === "terhubung" && d.wa.botHidup ? "ok" : d.wa.status === "menunggu_pairing" ? "warn" : "bad";
   const waSub = !d.wa.botHidup ? "Proses bot mati" : d.wa.status === "terhubung" ? `Terhubung · ${samarNomor(d.wa.nomorBot)}` : d.wa.status === "menunggu_pairing" ? "Menunggu pairing" : "Terputus";
-  const aiNada = !d.ai.aktif || !d.ai.adaToken ? undefined : d.ai.siap ? "claude" : "bad";
+  const aiNada = !d.ai.aktif || !d.ai.adaToken ? undefined : d.ai.claudeSiap ? "claude" : "bad";
   const tile = (ikon: IconName, cls: string) => (
     <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${cls}`}>
       <Icon name={ikon} size={16} />
@@ -146,7 +138,7 @@ function bangunNode(d: DataKoneksi): Record<IdNode, Node> {
       {
         ikon: tile(IKON_FITUR[f.kode] ?? "sparkles", f.aktif && d.ai.siap ? "bg-claude-soft text-claude" : "bg-subtle text-muted"),
         judul: f.label,
-        sub: !f.aktif ? "Mati" : !d.ai.siap ? "Menunggu Claude" : `${f.hariIni}× hari ini`,
+        sub: !f.aktif ? "Mati" : !d.ai.siap ? "Menunggu AI" : `${f.hariIni}× hari ini`,
         href: f.kode === "chat_web" ? "/asisten" : "#pemakaian",
       } satisfies Node,
     ]),
@@ -171,20 +163,20 @@ function bangunNode(d: DataKoneksi): Record<IdNode, Node> {
     antrean: { ikon: tile("send", "bg-subtle text-fg-2"), judul: "Antrean pesan", sub: `${d.antrean} menunggu · ${d.pesanHariIni.keluar} terkirim hari ini`, href: "/pengaturan" },
     claude: {
       ikon: (
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-claude-soft">
-          <TandaClaude />
+        <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg bg-subtle ${d.ai.aktif && d.ai.adaToken ? "" : "opacity-50 grayscale"}`}>
+          <LogoClaude />
         </span>
       ),
       judul: "Claude",
       sub: !d.ai.adaToken
         ? "Belum disambungkan"
         : d.ai.sesi5Jam !== null || d.ai.mingguan !== null
-          ? `${d.ai.siap ? "" : `${d.ai.label} · `}5 jam ${Math.round(d.ai.sesi5Jam ?? 0)}% · minggu ${Math.round(d.ai.mingguan ?? 0)}%`
+          ? `${d.ai.claudeSiap ? "" : `${d.ai.label} · `}5 jam ${Math.round(d.ai.sesi5Jam ?? 0)}% · minggu ${Math.round(d.ai.mingguan ?? 0)}%`
           : `${d.ai.label} · ${d.ai.model} · ${d.ai.pakai}/${d.ai.batas}`,
       href: "#claude",
       nada: aiNada,
     },
-    ...cadanganNode(d, tile),
+    ...cadanganNode(d),
     ...fitur,
     fitur: {
       ikon: null,
@@ -196,31 +188,44 @@ function bangunNode(d: DataKoneksi): Record<IdNode, Node> {
   };
 }
 
-function cadanganNode(d: DataKoneksi, tile: (ikon: IconName, cls: string) => ReactNode): Record<"gemini" | "openrouter", Node> {
-  const satu = (p: "gemini" | "openrouter", ikon: IconName, warna: string): Node => {
+function cadanganNode(d: DataKoneksi): Record<"gemini" | "openrouter", Node> {
+  const satu = (p: "gemini" | "openrouter"): Node => {
     const c = d.ai.cadangan.find((x) => x.penyedia === p);
     const sub = !c?.aktif ? "Cadangan · mati" : !c.ada ? "Cadangan · belum disambungkan" : `Cadangan · ${c.labelKondisi}${c.model ? ` · ${c.model}` : ""}`;
-    return { ikon: tile(ikon, c?.siap ? warna : "bg-subtle text-muted"), judul: c?.label ?? p, sub, href: `#${p}`, nada: c?.aktif && c.ada && !c.siap ? "bad" : undefined };
+    const ikon = (
+      <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg bg-subtle text-fg ${c?.siap ? "" : "opacity-50 grayscale"}`}>
+        <LogoPenyedia penyedia={p} />
+      </span>
+    );
+    return { ikon, judul: c?.label ?? p, sub, href: `#${p}`, nada: c?.aktif && c.ada && !c.siap ? "bad" : undefined };
   };
-  return { gemini: satu("gemini", "sparkles", "bg-[color-mix(in_srgb,var(--series-1)_15%,transparent)] text-[var(--series-1)]"), openrouter: satu("openrouter", "transfer", "bg-[color-mix(in_srgb,var(--series-5)_15%,transparent)] text-[var(--series-5)]") };
+  return { gemini: satu("gemini"), openrouter: satu("openrouter") };
+}
+
+/** Penyedia bisa dipakai, dimatikan/belum disambungkan (garisnya tidak digambar), atau bermasalah. */
+function kondisiPenyedia(d: DataKoneksi, p: IdPenyedia): "siap" | "tidak_ada" | "masalah" {
+  if (p === "claude") return !d.ai.aktif || !d.ai.adaToken ? "tidak_ada" : d.ai.claudeSiap ? "siap" : "masalah";
+  const c = d.ai.cadangan.find((x) => x.penyedia === p);
+  return !d.ai.aktif || !c?.aktif || !c.ada ? "tidak_ada" : c.siap ? "siap" : "masalah";
 }
 
 function gayaSisi(d: DataKoneksi, a: IdNode, b: IdNode): Gaya {
-  if (a === "hub" && (b === "gemini" || b === "openrouter")) {
-    const c = d.ai.cadangan.find((x) => x.penyedia === b);
-    return !c?.aktif || !c.ada ? "redup" : c.siap ? "biasa" : "putus";
-  }
   const waNyala = d.wa.status === "terhubung" && d.wa.botHidup;
   if (a === "hub" && b === "wa") return waNyala ? "aktif" : d.wa.status === "menunggu_pairing" ? "tunggu" : "putus";
   if (a === "wa") return waNyala ? (b === "keluarga" && !d.nomor.keluarga ? "redup" : "biasa") : "redup";
-  if (a === "hub" && b === "claude") return !d.ai.aktif || !d.ai.adaToken ? "redup" : d.ai.siap ? "claude" : d.ai.kondisi === "kuota" || d.ai.kondisi === "limit" ? "tunggu" : "putus";
-  if (b === "fitur") {
-    if (!d.ai.siap || !d.fitur.some((x) => x.aktif)) return "redup";
-    return d.fitur.some((x) => x.hariIni > 0) ? "pakai" : "biasa";
+  if (a === "hub" && isPenyedia(b)) {
+    const k = kondisiPenyedia(d, b);
+    if (k === "siap") return b;
+    if (k === "tidak_ada") return "redup";
+    return b === "claude" && (d.ai.kondisi === "kuota" || d.ai.kondisi === "limit") ? "tunggu" : "putus";
   }
-  const f = d.fitur.find((x) => x.kode === b);
-  if (!f || !f.aktif || !d.ai.siap) return "redup";
-  return f.hariIni > 0 ? "pakai" : "biasa";
+  if (!isPenyedia(a)) return "biasa";
+  // penyedia → fitur: cadangan yang mati / belum disambungkan tidak digambar supaya peta tidak ramai
+  const k = kondisiPenyedia(d, a);
+  if (k === "tidak_ada") return a === "claude" ? "redup" : "sembunyi";
+  const fitur = b === "fitur" ? d.fitur : d.fitur.filter((x) => x.kode === b);
+  if (k !== "siap" || !fitur.some((x) => x.aktif)) return "redup";
+  return fitur.some((x) => (x.per[a] ?? 0) > 0) ? `pakai_${a}` : "biasa";
 }
 
 const NADA_BORDER: Record<string, string> = {
@@ -267,8 +272,9 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
   const kilat = new Map<string, string>();
   for (const j of jejak) if (waktu > j.mulai + j.durasi && waktu < j.mulai + j.durasi + 500) kilat.set(petakan(j.ke), j.warna);
   const nilaiJalan = [...berjalan.values()];
-  const fiturJalan = new Set(nilaiJalan.filter((j) => j.penyedia === "claude").map((j) => petakan(j.fitur)));
+  const fiturJalan = new Map(nilaiJalan.map((j) => [petakan(j.fitur), WARNA_PENYEDIA[j.penyedia] ?? WARNA_PENYEDIA.claude]));
   const penyediaJalan = new Set(nilaiJalan.map((j) => j.penyedia));
+  const warnaJalan = (id: string) => fiturJalan.get(id) ?? (penyediaJalan.has(id) ? WARNA_PENYEDIA[id] : undefined);
 
   useEffect(() => setT(fit()), [fit]);
 
@@ -331,7 +337,9 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
         <div className="absolute left-0 top-0 origin-top-left" style={{ width: tata.w, height: tata.h, transform: `translate(${t.x}px, ${t.y}px) scale(${t.k})` }}>
           <svg width={tata.w} height={tata.h} className="absolute inset-0" aria-hidden="true">
             {tata.sisi.map(([a, b]) => {
-              const g = WARNA_GARIS[gayaSisi(d, a, b)];
+              const gaya = gayaSisi(d, a, b);
+              if (gaya === "sembunyi") return null;
+              const g = WARNA_GARIS[gaya];
               return (
                 <path
                   key={`${a}-${b}`}
@@ -360,9 +368,10 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
             const n = node[id];
             const [x, y] = tata.pos[id]!;
             const isHub = id === "hub";
+            const sempitPenyedia = tata === SEMPIT && isPenyedia(id);
             if (n.daftar) {
               return (
-                <Link key={id} href={n.href} draggable={false} className={`absolute w-[300px] -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card p-2.5 shadow-sm transition-shadow ${fiturJalan.has(id) ? "border-claude" : "border-line"}`} style={{ left: x, top: y, boxShadow: kilat.has(id) ? `0 0 0 4px color-mix(in srgb, ${kilat.get(id)} 30%, transparent)` : undefined }}>
+                <Link key={id} href={n.href} draggable={false} className="absolute w-[300px] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-card p-2.5 shadow-sm transition-shadow" style={{ left: x, top: y, borderColor: warnaJalan(id), boxShadow: kilat.has(id) ? `0 0 0 4px color-mix(in srgb, ${kilat.get(id)} 30%, transparent)` : undefined }}>
                   <span className="mb-1.5 block px-1 text-xs font-semibold uppercase tracking-wide text-muted">{n.judul}</span>
                   <span className="grid grid-cols-1 gap-1">
                     {n.daftar.map((f) => (
@@ -383,13 +392,13 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
                 key={id}
                 href={n.href}
                 draggable={false}
-                className={`absolute flex -translate-x-1/2 -translate-y-1/2 items-center gap-2.5 rounded-xl border bg-card px-3 py-2 shadow-sm transition hover:border-line-strong ${isHub ? "max-w-[240px]" : tata === SEMPIT ? "max-w-[190px]" : "max-w-[230px]"} ${n.nada ? NADA_BORDER[n.nada] : "border-line"} ${penyediaJalan.has(id) || fiturJalan.has(id) ? "mikir border-claude" : ""}`}
-                style={{ left: x, top: y, boxShadow: kilat.has(id) ? `0 0 0 4px color-mix(in srgb, ${kilat.get(id)} 30%, transparent)` : undefined }}
+                className={`absolute flex -translate-x-1/2 -translate-y-1/2 items-center gap-2.5 rounded-xl border bg-card px-3 py-2 shadow-sm transition hover:border-line-strong ${isHub ? "max-w-[240px]" : sempitPenyedia ? "w-[124px] flex-col gap-1 px-2 py-2 text-center" : tata === SEMPIT ? "max-w-[190px]" : "max-w-[230px]"} ${n.nada ? NADA_BORDER[n.nada] : "border-line"} ${warnaJalan(id) ? "mikir" : ""}`}
+                style={{ left: x, top: y, borderColor: warnaJalan(id), ["--warna-mikir" as string]: warnaJalan(id), boxShadow: kilat.has(id) ? `0 0 0 4px color-mix(in srgb, ${kilat.get(id)} 30%, transparent)` : undefined }}
               >
                 {n.ikon}
-                <span className="min-w-0">
+                <span className={sempitPenyedia ? "w-full min-w-0" : "min-w-0"}>
                   <span className={`block truncate text-sm font-semibold ${isHub ? "text-brand" : n.nada === "claude" ? "text-claude" : "text-fg"}`}>{n.judul}</span>
-                  <span className="block truncate text-[11px] leading-tight text-muted">{penyediaJalan.has(id) ? `Lagi mikir… (${nilaiJalan.filter((j) => j.penyedia === id).length})` : n.sub}</span>
+                  <span className={`block text-[11px] leading-tight text-muted ${sempitPenyedia ? "line-clamp-2" : "truncate"}`}>{penyediaJalan.has(id) ? `Lagi mikir… (${nilaiJalan.filter((j) => j.penyedia === id).length})` : n.sub}</span>
                 </span>
               </Link>
             );
@@ -410,8 +419,12 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
       </div>
       <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
         <Legenda warna="var(--ok)" alir label="WhatsApp tersambung" />
-        <Legenda warna="var(--claude)" alir label="Claude tersambung" />
-        <Legenda warna="var(--claude)" label="Fitur dipakai hari ini" op={0.75} />
+        <Legenda warna={WARNA_PENYEDIA.claude} alir label="Claude tersambung" />
+        {d.ai.cadangan.map((c) =>
+          kondisiPenyedia(d, c.penyedia as IdPenyedia) === "tidak_ada" ? null : <Legenda key={c.penyedia} warna={WARNA_PENYEDIA[c.penyedia]} alir label={`${c.label} tersambung`} />,
+        )}
+        <Legenda warna="var(--line-strong)" label="Fitur bisa dijawab penyedia ini" />
+        <Legenda warna={WARNA_PENYEDIA.claude} label="Dipakai hari ini (warna penyedia)" op={0.75} />
         <Legenda warna="var(--warn)" putus label="Menunggu / kena batas" />
         <Legenda warna="var(--bad)" putus label="Terputus / error" />
         <li className="hidden sm:block">Geser untuk pindah · Ctrl + scroll untuk zoom</li>

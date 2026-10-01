@@ -37,7 +37,7 @@ const POLL_MS = 1500;
 
 const WA = "var(--ok)";
 const CLAUDE = "var(--claude)";
-const WARNA_PENYEDIA: Record<string, string> = { claude: CLAUDE, gemini: "var(--series-1)", openrouter: "var(--series-5)" };
+export const WARNA_PENYEDIA: Record<string, string> = { claude: CLAUDE, gemini: "var(--series-1)", openrouter: "var(--series-5)" };
 const NAMA_PENYEDIA: Record<string, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter" };
 
 /** Panggilan AI yang sedang berjalan: penyedia + fitur. */
@@ -45,9 +45,9 @@ export interface Berjalan {
   penyedia: string;
   fitur: string;
 }
-// Claude terhubung ke node fitur; cadangan langsung ke DompetKos
-const pergi = (p: string, f: string): [string, string][] => (p === "claude" ? [["hub", "claude"], ["claude", f]] : [["hub", p]]);
-const pulang = (p: string, f: string): [string, string][] => (p === "claude" ? [[f, "claude"], ["claude", "hub"]] : [[p, "hub"]]);
+// semua penyedia (Claude & cadangan) melayani node fitur: DompetKos → penyedia → fitur, lalu balik
+const pergi = (p: string, f: string): [string, string][] => [["hub", p], [p, f]];
+const pulang = (p: string, f: string): [string, string][] => [[f, p], [p, "hub"]];
 const MERAH = "var(--bad)";
 
 /**
