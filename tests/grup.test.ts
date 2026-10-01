@@ -606,10 +606,10 @@ describe("jawaban gabungan: semua penyedia sekaligus, disatukan jadi yang terbai
     await siapkan(undefined, { strategi: "gabung" });
     pasang();
     const r = await kirim("/ai apa ibukota prancis?");
-    expect(r).toContain("FINAL dari claude");
+    expect(r).toContain("FINAL dari gemini");
     expect(dipanggil.slice(0, 3).sort()).toEqual(["claude", "gemini", "openrouter"]); // tiga draf (sekaligus)
     expect(dipanggil).toHaveLength(4);
-    expect(dipanggil[3]).toBe("claude"); // penggabungan oleh Claude
+    expect(dipanggil[3]).toBe("gemini"); // penggabungan oleh Gemini: cepat, gratis, tanpa kuota Claude
     const g = promptGabungan();
     for (const d of ["draf claude", "draf gemini", "draf openrouter", "apa ibukota prancis?", "# Pesan baru dari Budi"]) expect(g, d).toContain(d);
     expect(g).toMatch(/## Jawaban A\ndraf claude[\s\S]*## Jawaban B\ndraf gemini[\s\S]*## Jawaban C\ndraf openrouter/); // urutan tetap
@@ -624,7 +624,7 @@ describe("jawaban gabungan: semua penyedia sekaligus, disatukan jadi yang terbai
     const r = await kirim("/ai halo");
     expect(r).toMatch(/_digabung dari Claude · haiku, Gemini · gemini-[\w.-]+, OpenRouter · llama-3\.3-70b-instruct_$/);
     await setSetting(db, "grup_ai_tanda", "0");
-    expect(await kirim("/ai halo lagi", { nomor: "628222222222" })).toBe("FINAL dari claude");
+    expect(await kirim("/ai halo lagi", { nomor: "628222222222" })).toBe("FINAL dari gemini");
   });
 
   it("hanya satu penyedia yang menjawab: dipakai langsung, tanpa tahap penggabungan", async () => {
@@ -668,14 +668,19 @@ describe("jawaban gabungan: semua penyedia sekaligus, disatukan jadi yang terbai
     await new Promise((r2) => setTimeout(r2, 2500)); // biarkan panggilan yang tertinggal selesai sebelum tes berikutnya mereset database
   });
 
-  it("kuota langganan Claude tinggi: penggabungan dikerjakan Gemini, bukan Claude", async () => {
+  it("soal sangat berat: Claude yang menggabungkan; kalau kuota langganannya tinggi, Gemini", async () => {
     await siapkan(undefined, { strategi: "gabung" });
     pasang();
+    const r1 = await kirim("/ai buktikan teorema pythagoras secara formal", { nomor: "628111111101", now: at(12, 0) });
+    expect(r1).toContain("FINAL dari claude");
+    expect(dipanggil[3]).toBe("claude");
+
+    dipanggil = [];
     const reset = Math.round(at(17).getTime() / 1000);
     const nilai = JSON.stringify({ jendela: { five_hour: { persen: 75, resetsAt: reset, diperbarui: at(11).toISOString() } }, status: "allowed" });
     await db.setting.upsert({ where: { kunci: "ai_batas_claude" }, update: { nilai }, create: { kunci: "ai_batas_claude", nilai } });
-    const r = await kirim("/ai halo");
-    expect(r).toContain("FINAL dari gemini");
+    const r2 = await kirim("/ai buktikan teorema limit secara formal", { nomor: "628111111102", now: at(12, 1) });
+    expect(r2).toContain("FINAL dari gemini");
     expect(dipanggil.filter((x) => x === "claude")).toHaveLength(1); // Claude hanya membuat draf
   });
 
@@ -727,7 +732,7 @@ describe("jawaban gabungan: semua penyedia sekaligus, disatukan jadi yang terbai
     await kirim("/ai halo");
     let k = await dataKoneksi(db, at(12, 1));
     expect(k.grup).toMatchObject({ strategi: "gabung", berikut: null, hariIni: 1, roda: ["claude", "gemini", "openrouter"] });
-    expect(k.grup.per.claude).toBe(2); // draf + penggabungan
+    expect(k.grup.per).toMatchObject({ claude: 1, gemini: 2, openrouter: 1 }); // satu draf tiap penyedia + penggabungan oleh Gemini
     await setSetting(db, "grup_ai_strategi", "giliran");
     k = await dataKoneksi(db, at(12, 2));
     expect(k.grup.strategi).toBe("giliran");

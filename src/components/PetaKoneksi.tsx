@@ -443,7 +443,9 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
                 />
               );
             })}
+            {/* label jumlah hanya di mode bergiliran; mode gabungan: ketiga garis mengalir bersamaan, tanpa angka */}
             {d.grup.aktif &&
+              d.grup.strategi === "giliran" &&
               PENYEDIA.filter((p) => d.grup.roda.includes(p)).map((p) => {
                 const [x, y] = titikKurva(tata.pos.grup!, tata.pos[p]!, tata.arah, tata.arah === "datar" ? 0.5 : 0.55);
                 const berikut = d.grup.berikut === p;

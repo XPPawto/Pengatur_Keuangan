@@ -296,8 +296,11 @@ interface Draf {
 }
 
 const URUT_UTAMA: readonly Penyedia[] = ["claude", "gemini", "openrouter"];
-/** Waktu tunggu penyedia lain setelah draf pertama masuk: soal berat boleh menunggu lebih lama (Opus bisa lambat). */
-const TENGGANG_MS: Record<TingkatSoal, number> = { ringan: 8_000, berat: 20_000, sangat_berat: 45_000 };
+/**
+ * Waktu tunggu penyedia lain setelah draf pertama masuk. Claude CLI biasanya 10–15 dtk (Opus bisa 40+ dtk) sedangkan Gemini ±1–2 dtk,
+ * jadi tenggang harus cukup panjang supaya jawaban Claude ikut tergabung; soal berat menunggu lebih lama.
+ */
+const TENGGANG_MS: Record<TingkatSoal, number> = { ringan: 15_000, berat: 30_000, sangat_berat: 60_000 };
 
 /** Nama model untuk ditampilkan di bawah jawaban: "nvidia/nemotron-3-super:free" → "nemotron-3-super". */
 const modelPendek = (m?: string) => (m ?? "").replace(/^[^/]+\//, "").replace(/:free$/, "");
@@ -338,11 +341,16 @@ function kumpulkanDraf(db: Db, tersedia: readonly Penyedia[], r: PermintaanDraf,
   });
 }
 
-/** Urutan penyedia untuk tahap penggabungan: Claude dulu (paling rapi), kecuali kuota langganannya sudah tinggi. */
-async function urutanPenggabung(db: Db, tersedia: readonly Penyedia[], now: Date): Promise<Penyedia[]> {
-  const urut = URUT_UTAMA.filter((p) => tersedia.includes(p));
+/**
+ * Urutan penyedia untuk tahap penggabungan. Gemini dulu: cepat (±1–2 dtk), gratis, dan tidak memakai kuota langganan Claude
+ * (penggabungan lewat Claude CLI menambah ±10 dtk). Soal sangat berat: Claude dulu demi kerapian, kecuali kuota langganannya tinggi.
+ */
+async function urutanPenggabung(db: Db, tersedia: readonly Penyedia[], tingkat: TingkatSoal, now: Date): Promise<Penyedia[]> {
+  const ada = (p: Penyedia) => tersedia.includes(p);
   const tinggi = (await batasClaude(db, now)).some((j) => (j.kode === "five_hour" ? j.persen >= 70 : j.persen >= 85));
-  return tinggi ? [...urut.filter((p) => p !== "claude"), ...urut.filter((p) => p === "claude")] : urut;
+  const claudeDulu = tingkat === "sangat_berat" && !tinggi;
+  const urut: Penyedia[] = claudeDulu ? ["claude", "gemini", "openrouter"] : ["gemini", "openrouter", "claude"];
+  return urut.filter(ada);
 }
 
 /** Gabungkan beberapa draf jadi satu jawaban. null = semua penyedia gagal menggabungkan. */
@@ -358,7 +366,7 @@ async function gabungkan(db: Db, draf: Draf[], promptDasar: string, ada_foto: bo
     "Tulis SATU jawaban final terbaik untuk pesan baru di atas.",
   ].join("\n");
   const modelClaude = await modelClaudeGrup(db, tingkat === "sangat_berat" ? "berat" : tingkat, now); // menggabungkan tidak perlu Opus
-  for (const p of await urutanPenggabung(db, tersedia, now)) {
+  for (const p of await urutanPenggabung(db, tersedia, tingkat, now)) {
     const h = await panggilAI(db, { fitur: "chat_grup", system: SYSTEM_GRUP + SYSTEM_EDITOR, prompt, now, timeoutMs: 60_000, penyedia: p, model: p === "claude" ? modelClaude : undefined });
     const teks = h.ok ? bersihkanBalasan(h.teks) : "";
     if (teks) return { teks, penyedia: p, model: h.ok ? h.model : undefined };

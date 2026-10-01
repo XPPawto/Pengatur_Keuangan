@@ -92,7 +92,7 @@ export default function GrupAIPanel({
               <option value="gabung">Gabungan semua penyedia (paling akurat, ±4 panggilan per pertanyaan)</option>
               <option value="giliran">Bergiliran satu penyedia (round robin, hemat kuota)</option>
             </select>
-            <p className="hint">Gabungan memakai kuota Claude sekitar 2× per pertanyaan (jawaban + penggabungan); kalau kuota langganan jadi cepat habis, pilih Bergiliran.</p>
+            <p className="hint">Gabungan memanggil semua penyedia untuk tiap pertanyaan (±4 panggilan) dan menunggu jawaban Claude yang paling lambat (bisa 10–30 detik). Penggabungan dikerjakan Gemini (cepat & gratis); kuota Claude terpakai 1× per pertanyaan. Kalau terasa lambat atau kuota cepat habis, pilih Bergiliran.</p>
           </div>
           <div>
             <label htmlFor="grup_ai_model_claude" className="label">
