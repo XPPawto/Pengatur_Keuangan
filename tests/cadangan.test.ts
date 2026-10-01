@@ -8,9 +8,9 @@ import { parseMessage } from "@/lib/parser/message";
 import { tanyaAsisten } from "@/lib/ai/asisten";
 import { fromWib } from "@/lib/time";
 import type { HasilClaude } from "@/lib/ai/claude";
-import { golongkanGemini, penjalanGeminiApi, penjalanGeminiCli } from "@/lib/ai/gemini";
+import { aturDaftarGemini, daftarModelGemini, daftarModelGeminiCache, golongkanGemini, penjalanGeminiApi, penjalanGeminiCli } from "@/lib/ai/gemini";
 import { aturDaftarModel, golongkanOpenRouter, masalahModel, penjalanOpenRouter } from "@/lib/ai/openrouter";
-import { bacaStatistik, catatModel, tahanSementaraMs, urutkanModel, type StatModel } from "@/lib/ai/modelOtomatis";
+import { bacaStatistik, calonGemini, catatModel, tahanSementaraMs, urutkanModel, type StatModel } from "@/lib/ai/modelOtomatis";
 import { panggilAI, pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI, statusAI, statusCadangan, tesKoneksiAI, urutanPenyedia } from "@/lib/ai/panggil";
 import { setSetting } from "@/lib/services/settings";
 import { resetDb } from "./helpers";
@@ -23,11 +23,13 @@ const KUNCI_G = "AIzaSy-kunci-gemini-tes-0123456789";
 const KUNCI_O = "sk-or-v1-kunci-openrouter-tes-0123456789";
 const tanya = (now: Date) => panggilAI(db, { fitur: "chat_web", system: "s", prompt: "p", now });
 
+const GEMINI_DITEMUKAN = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"];
 let dipanggil: string[] = [];
 let jawab: Record<string, () => HasilClaude>;
 let pulih: (() => void)[] = [];
 beforeEach(async () => {
   await resetDb(db);
+  aturDaftarGemini(GEMINI_DITEMUKAN); // tanpa ini, memuat daftar model dari Google di latar belakang (jaringan sungguhan)
   dipanggil = [];
   jawab = { claude: () => ok("claude"), gemini: () => ok("gemini"), openrouter: () => ok("openrouter") };
   pulih = [
@@ -41,6 +43,7 @@ beforeEach(async () => {
 afterEach(() => {
   pulih.forEach((f) => f());
   aturDaftarModel(null);
+  aturDaftarGemini(null);
 });
 afterAll(() => db.$disconnect());
 
@@ -607,5 +610,73 @@ describe("model otomatis: pindah ke model yang paling andal kalau model penuh", 
     s = (await bacaStatistik(db))["gemini|m"];
     expect(s).toMatchObject({ ok: 2, berturut: 0, ms: 1300 }); // EWMA: 1000 → 0.7·1000 + 0.3·2000
     expect(s.tahanSampai).toBeUndefined();
+  });
+});
+
+describe("penemuan model Gemini dari Google", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const metode = ["generateContent", "countTokens"];
+  const respons = {
+    models: [
+      { name: "models/gemini-2.5-flash", supportedGenerationMethods: metode },
+      { name: "models/gemini-3.5-flash-lite", supportedGenerationMethods: metode },
+      { name: "models/gemini-3.9-flash", supportedGenerationMethods: metode },
+      { name: "models/gemini-3.10-flash", supportedGenerationMethods: metode },
+      { name: "models/gemini-3.9-flash-preview-0501", supportedGenerationMethods: metode }, // preview: dibuang
+      { name: "models/gemini-3.9-pro", supportedGenerationMethods: metode }, // bukan flash: dibuang
+      { name: "models/gemini-embedding-001", supportedGenerationMethods: ["embedContent"] }, // bukan generateContent
+      { name: "models/gemma-3-27b-it", supportedGenerationMethods: metode }, // bukan gemini
+    ],
+  };
+
+  it("hanya flash / flash-lite stabil yang mendukung generateContent, versi terbaru dulu, di-cache", async () => {
+    aturDaftarGemini(null);
+    const f = vi.fn(async (_u: string, _i?: RequestInit) => new Response(JSON.stringify(respons), { status: 200 }));
+    vi.stubGlobal("fetch", f);
+    expect(await daftarModelGemini(KUNCI_G)).toEqual(["gemini-3.10-flash", "gemini-3.9-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]);
+    expect(f).toHaveBeenCalledTimes(1);
+    expect((f.mock.calls[0][1]!.headers as Record<string, string>)["x-goog-api-key"]).toBe(KUNCI_G); // key di header, bukan di URL
+    expect(f.mock.calls[0][0]).not.toContain(KUNCI_G);
+    expect(await daftarModelGemini(KUNCI_G)).toHaveLength(4);
+    expect(f).toHaveBeenCalledTimes(1); // dari cache
+    expect(daftarModelGeminiCache()).toHaveLength(4);
+  });
+
+  it("Google tidak bisa dihubungi → error (pemanggil memakai daftar tetap), cache tetap kosong", async () => {
+    aturDaftarGemini(null);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 500 })));
+    await expect(daftarModelGemini(KUNCI_G)).rejects.toThrow("Gemini 500");
+    expect(daftarModelGeminiCache()).toBeNull();
+  });
+
+  it("calonGemini: tanpa daftar → daftar tetap; dengan daftar → teruji yang masih terdaftar dulu, model baru di belakang", () => {
+    expect(calonGemini(false, "x", null).slice(0, 3)).toEqual(["x", "gemini-3.6-flash", "gemini-3.5-flash-lite"]);
+    // 3.6-flash sudah tidak terdaftar → dibuang; 3.9-flash model baru → ditambahkan setelah yang teruji
+    const ditemukan = ["gemini-3.9-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-4.0-flash-lite"];
+    expect(calonGemini(false, "x", ditemukan)).toEqual(["x", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.9-flash", "gemini-4.0-flash-lite"]);
+    // tugas kecil: model baru yang "lite" didahulukan
+    expect(calonGemini(true, "x", ditemukan)).toEqual(["x", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-4.0-flash-lite", "gemini-3.9-flash"]);
+  });
+
+  it("model baru yang ditemukan dipakai kalau model pilihan penuh dan model lama sudah tidak terdaftar", async () => {
+    await simpanKunciCadangan(db, "gemini", KUNCI_G);
+    aturDaftarGemini(["gemini-9.1-flash"]); // semua model lama sudah tidak terdaftar
+    let n = 0;
+    jawab.gemini = () => (n++ === 0 ? { ok: false, alasan: "sibuk", pesan: "high demand (UNAVAILABLE)", durasiMs: 3 } : ok("gemini"));
+    const h = await panggilAI(db, { fitur: "chat_web", system: "s", prompt: "p", now: at("2026-10-05"), penyedia: "gemini" });
+    expect(h).toMatchObject({ ok: true, penyedia: "gemini", model: "gemini-9.1-flash" });
+    expect(dipanggil).toEqual([`gemini:gemini-3.6-flash:${KUNCI_G}`, `gemini:gemini-9.1-flash:${KUNCI_G}`]); // pilihan pemilik dulu, lalu model baru
+  });
+
+  it("jenis masa tahan tercatat (sementara / rusak) dan dihapus saat sukses", async () => {
+    const t = at("2026-10-05");
+    await catatModel(db, "gemini", "m1", { ok: false, durasiMs: 3 }, "sementara", t);
+    await catatModel(db, "gemini", "m2", { ok: false, durasiMs: 3 }, "rusak", t);
+    let st = await bacaStatistik(db);
+    expect([st["gemini|m1"].jenis, st["gemini|m2"].jenis]).toEqual(["sementara", "rusak"]);
+    await catatModel(db, "gemini", "m1", { ok: true, durasiMs: 800 }, null, t);
+    st = await bacaStatistik(db);
+    expect(st["gemini|m1"].jenis).toBeUndefined();
+    expect(st["gemini|m1"].tahanSampai).toBeUndefined();
   });
 });

@@ -271,3 +271,53 @@ export const penjalanGeminiApi: PenjalanGemini = async (p) => {
 
 /** API key → API resmi langsung; login akun Google → Gemini CLI. */
 export const penjalanGeminiOtomatis: PenjalanGemini = (p) => (p.apiKey ? penjalanGeminiApi(p) : penjalanGeminiCli(p));
+
+// ---------------------------------------------------------------- penemuan model
+
+let cacheGemini: { daftar: string[]; sampai: number } | null = null;
+let sedangMemuat: Promise<string[]> | null = null;
+
+/** Versi dari nama model ("gemini-3.6-flash" → [3, 6]) untuk mengurutkan dari yang terbaru. */
+const versi = (m: string) => (/^gemini-(\d+)(?:\.(\d+))?-/.exec(m) ?? []).slice(1).map((x) => Number(x ?? 0));
+
+/** Isi cache daftar model (dipakai tes). */
+export function aturDaftarGemini(daftar: string[] | null) {
+  cacheGemini = daftar ? { daftar, sampai: Date.now() + 6 * 3600_000 } : null;
+  sedangMemuat = null;
+}
+
+/** Daftar dari cache tanpa jaringan; null kalau belum pernah dimuat / sudah kedaluwarsa. */
+export function daftarModelGeminiCache(): string[] | null {
+  return cacheGemini && cacheGemini.sampai > Date.now() ? cacheGemini.daftar : null;
+}
+
+/**
+ * Model Gemini "stabil" (flash / flash-lite, bukan preview/exp) yang mendukung generateContent untuk key ini,
+ * dari API resmi Google, diurutkan dari versi terbaru. Cache 6 jam. Melempar error kalau Google tidak bisa dihubungi.
+ */
+export async function daftarModelGemini(apiKey: string): Promise<string[]> {
+  const cache = daftarModelGeminiCache();
+  if (cache) return cache;
+  const r = await fetch(`${API_GEMINI}/models?pageSize=200`, { headers: { "x-goog-api-key": apiKey }, signal: AbortSignal.timeout(10_000) });
+  if (!r.ok) throw new Error(`Gemini ${r.status}`);
+  const j = (await r.json()) as { models?: { name?: string; supportedGenerationMethods?: string[] }[] };
+  const daftar = (j.models ?? [])
+    .filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
+    .map((m) => (m.name ?? "").replace(/^models\//, ""))
+    .filter((n) => /^gemini-\d+(?:\.\d+)?-flash(?:-lite)?$/.test(n))
+    .sort((a, b) => {
+      const [va, vb] = [versi(a), versi(b)];
+      return vb[0] - va[0] || (vb[1] ?? 0) - (va[1] ?? 0) || a.localeCompare(b);
+    });
+  cacheGemini = { daftar, sampai: Date.now() + 6 * 3600_000 };
+  return daftar;
+}
+
+/** Muat/segarkan daftar di latar belakang supaya permintaan chat tidak pernah menunggu jaringan; kegagalan diabaikan. */
+export function segarkanDaftarGemini(apiKey: string): void {
+  if (sedangMemuat || daftarModelGeminiCache()) return;
+  sedangMemuat = daftarModelGemini(apiKey).finally(() => {
+    sedangMemuat = null;
+  });
+  sedangMemuat.catch(() => {});
+}

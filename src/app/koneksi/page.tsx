@@ -4,7 +4,10 @@ import WaPanel from "@/components/WaPanel";
 import StackedColumns from "@/components/charts/StackedColumns";
 import { Alert, Badge, Card, PageHeader, Stat } from "@/components/ui";
 import { prisma } from "@/lib/db";
-import { LABEL_FITUR, LABEL_KONDISI, statusAI } from "@/lib/ai/panggil";
+import { kunciCadangan, LABEL_FITUR, LABEL_KONDISI, statusAI } from "@/lib/ai/panggil";
+import { daftarModelGeminiCache, segarkanDaftarGemini } from "@/lib/ai/gemini";
+import { bacaStatistik } from "@/lib/ai/modelOtomatis";
+import type { BarisStatModel } from "@/lib/ai/model";
 import { dataKoneksi, ringkasanPemakaian } from "@/lib/services/koneksi";
 import { getAllSettings, getSetting } from "@/lib/services/settings";
 import CadanganPanel from "@/components/CadanganPanel";
@@ -39,6 +42,35 @@ export default async function KoneksiPage() {
     getAllSettings(prisma),
     daftarModelGratis().catch(() => null),
   ]);
+
+  // kesehatan model (statistik belajar otomatis); status dihitung di sini supaya server & browser tidak beda jam
+  const stat = await bacaStatistik(prisma);
+  const labelWaktu = (iso: string) => {
+    const d = new Date(iso);
+    const { jam, menit } = wibHM(d);
+    const hm = `${String(jam).padStart(2, "0")}.${String(menit).padStart(2, "0")}`;
+    return wibDate(d) === wibDate(now) ? hm : `${fmtTanggal(wibDate(d))} ${hm}`;
+  };
+  const statModel: BarisStatModel[] = Object.entries(stat)
+    .map(([k, v]) => {
+      const [penyedia, ...sisa] = k.split("|");
+      const ditahan = !!v.tahanSampai && new Date(v.tahanSampai) > now;
+      return {
+        penyedia,
+        model: sisa.join("|"),
+        ok: v.ok,
+        gagal: v.gagal,
+        ms: v.ms,
+        status: ditahan ? (v.jenis === "rusak" ? "ditutup" : "ditahan") : v.berturut > 0 ? "sempat_gagal" : "sehat",
+        bolehLagi: ditahan ? labelWaktu(v.tahanSampai!) : null,
+      } satisfies BarisStatModel;
+    })
+    .sort((a, b) => a.penyedia.localeCompare(b.penyedia) || b.ok - a.ok || a.model.localeCompare(b.model));
+  // daftar model Gemini dari Google: dibaca dari cache, dimuat di latar belakang kalau belum ada (tidak menunda halaman)
+  const keyGemini = (await kunciCadangan(prisma, "gemini")).kunci;
+  const geminiDitemukan = daftarModelGeminiCache();
+  if (!geminiDitemukan && keyGemini) segarkanDaftarGemini(keyGemini);
+
   const waOk = peta.wa.status === "terhubung" && peta.wa.botHidup;
 
   return (
@@ -94,6 +126,8 @@ export default async function KoneksiPage() {
           modelGratis={modelGratis}
           autoGemini={setel.ai_gemini_auto !== "0"}
           autoOpenRouter={setel.ai_openrouter_auto !== "0"}
+          statModel={statModel}
+          geminiDitemukan={geminiDitemukan}
         />
       </section>
 

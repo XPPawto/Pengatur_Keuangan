@@ -167,6 +167,14 @@ export async function tesCadanganAction(_: FormState, form: FormData): Promise<F
   return { error: `${labelKondisiCadangan(h.alasan as KondisiAI)}: ${h.pesan}` };
 }
 
+/** Hapus statistik model & daftar model yang ditandai menolak (mulai belajar dari nol). */
+export async function resetStatistikModelAction(_: FormState, __: FormData): Promise<FormState> {
+  await requireLogin();
+  await prisma.setting.deleteMany({ where: { kunci: { in: ["ai_model_statistik", "ai_openrouter_model_buruk"] } } });
+  revalidatePath("/koneksi");
+  return { ok: "Statistik model direset." };
+}
+
 export async function simpanCadanganAction(_: FormState, form: FormData): Promise<FormState> {
   await requireLogin();
   const onOff = (k: string) => (form.get(k) === "on" ? "1" : "0");
