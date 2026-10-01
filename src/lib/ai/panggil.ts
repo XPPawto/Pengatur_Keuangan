@@ -5,7 +5,7 @@ import { recipientsFor } from "../services/recipients";
 import { getSetting, getSettingNumber } from "../services/settings";
 import { adaLoginFolder, JENDELA, penjalanCli, type AlasanGagal, type HasilClaude, type InfoBatas, type JendelaBatas, type NamaJendela, type Penjalan } from "./claude";
 import { dekripsi, enkripsi, samarkan } from "./rahasia";
-import { adaLoginGemini, penjalanGeminiCli, type PenjalanGemini } from "./gemini";
+import { adaLoginGemini, penjalanGeminiOtomatis, type PenjalanGemini } from "./gemini";
 import { daftarModelGratis, masalahModel, modelGratis, penjalanOpenRouter, type PenjalanOpenRouter } from "./openrouter";
 
 export type Penyedia = "claude" | "gemini" | "openrouter";
@@ -408,7 +408,7 @@ export async function cekPulihAI(db: Db, now: Date): Promise<boolean> {
 
 // ---------------------------------------------------------------- penyedia cadangan (Gemini, OpenRouter)
 
-let penjalanGemini: PenjalanGemini = penjalanGeminiCli;
+let penjalanGemini: PenjalanGemini = penjalanGeminiOtomatis;
 let penjalanOR: PenjalanOpenRouter = penjalanOpenRouter;
 /** Ganti penjalan cadangan (dipakai tes). */
 export function setPenjalanCadangan(p: { gemini?: PenjalanGemini; openrouter?: PenjalanOpenRouter }): () => void {

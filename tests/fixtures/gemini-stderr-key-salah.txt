@@ -1,0 +1,24 @@
+Warning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience.
+[STARTUP] Phase 'cleanup_ops' was started but never ended. Skipping metrics.
+[STARTUP] Cannot measure phase 'cleanup_ops': start mark 'startup:cleanup_ops:start' not found (likely cleared by reset).
+Error when talking to Gemini API Full report available at: /tmp/gemini-client-error-Turn.run-sendMessageStream-2026-10-01T09-34-46-641Z.json _ApiError: {"error":{"message":"{\n  \"error\": {\n    \"code\": 400,\n    \"message\": \"API key not valid. Please pass a valid API key.\",\n    \"status\": \"INVALID_ARGUMENT\",\n    \"details\": [\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.ErrorInfo\",\n        \"reason\": \"API_KEY_INVALID\",\n        \"domain\": \"googleapis.com\",\n        \"metadata\": {\n          \"service\": \"generativelanguage.googleapis.com\"\n        }\n      },\n      {\n        \"@type\": \"type.googleapis.com/google.rpc.LocalizedMessage\",\n        \"locale\": \"en-US\",\n        \"message\": \"API key not valid. Please pass a valid API key.\"\n      }\n    ]\n  }\n}\n","code":400,"status":"Bad Request"}}
+    at throwErrorIfNotOK (file:///home/u/.npm-global/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:267862:24)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async file:///home/u/.npm-global/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:267625:7
+    at async Models.generateContentStream (file:///home/u/.npm-global/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:268721:16)
+    at async file:///home/u/.npm-global/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:311569:19
+    at async file:///home/u/.npm-global/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:288130:23
+    at async retryWithBackoff (file:///home/u/.npm-global/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:308151:23)
+    at async GeminiChat.makeApiCallAndProcessStream (file:///home/u/.npm-global/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332718:28)
+    at async GeminiChat.streamWithRetries (file:///home/u/.npm-global/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:332471:29)
+    at async Turn.run (file:///home/u/.npm-global/lib/node_modules/@google/gemini-cli/bundle/chunk-MLY4WQFO.js:333393:24) {
+  status: 400
+}
+{
+  "session_id": "018af675-f0e8-4431-abf8-e8619a26f792",
+  "error": {
+    "type": "Error",
+    "message": "{\"error\":{\"message\":\"{\\n  \\\"error\\\": {\\n    \\\"code\\\": 400,\\n    \\\"message\\\": \\\"API key not valid. Please pass a valid API key.\\\",\\n    \\\"status\\\": \\\"INVALID_ARGUMENT\\\",\\n    \\\"details\\\": [\\n      {\\n        \\\"@type\\\": \\\"type.googleapis.com/google.rpc.ErrorInfo\\\",\\n        \\\"reason\\\": \\\"API_KEY_INVALID\\\",\\n        \\\"domain\\\": \\\"googleapis.com\\\",\\n        \\\"metadata\\\": {\\n          \\\"service\\\": \\\"generativelanguage.googleapis.com\\\"\\n        }\\n      },\\n      {\\n        \\\"@type\\\": \\\"type.googleapis.com/google.rpc.LocalizedMessage\\\",\\n        \\\"locale\\\": \\\"en-US\\\",\\n        \\\"message\\\": \\\"API key not valid. Please pass a valid API key.\\\"\\n      }\\n    ]\\n  }\\n}\\n\",\"code\":400,\"status\":\"Bad Request\"}}",
+    "code": 400
+  }
+}
