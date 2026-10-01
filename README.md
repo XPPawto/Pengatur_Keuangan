@@ -21,6 +21,7 @@ Semua fase PRD (1–3) sudah dikerjakan, ditambah fitur lanjutan: **undo untuk s
 10. [Backup & ekspor](#10-backup--ekspor)
 11. [Untuk developer](#11-untuk-developer)
 12. [Asisten AI (Claude, pakai langganan)](#12-asisten-ai-claude-pakai-langganan)
+13. [Keamanan](#13-keamanan)
 
 ---
 
@@ -228,7 +229,7 @@ Aturan anti-spam: **tidak ada pesan 22.00–06.00**, **maksimal 1 pesan otomatis
 ## 11. Untuk developer
 
 ```bash
-npm test           # 250 tes: parser, jatah, aturan potong, alur bot, keluarga, penjadwal, aturan kirim,
+npm test           # 262 tes: parser, jatah, aturan potong, alur bot, keluarga, penjadwal, aturan kirim,
                    # undo, rekonsiliasi, kiriman, hutang-piutang, autopilot, skor, struk, ekspor, backup, OTP,
                    # asisten AI (runner CLI, kuota, status, usulan, memori, foto, review) — tanpa memanggil Claude asli
 npm run typecheck
@@ -299,4 +300,29 @@ Kalimat yang dipahami perintah biasa tetap diproses instan tanpa AI (hemat kuota
 - **Kalau Claude mati** (token kedaluwarsa/dicabut, kena batas langganan, Claude Code belum terpasang): bot tetap jalan normal, fitur AI istirahat, pemilik dikabari **sekali** lewat WhatsApp, dan bot mengecek ulang tiap 30 menit. Begitu pulih (token baru ditempel atau batas reset), AI nyala sendiri dan pemilik dikabari.
 - **Batas langganan Claude (sesi 5 jam & mingguan)** dibaca dari `rate_limit_event` yang dikirim Claude Code (`--output-format stream-json`) setiap kali bot memanggil, lalu ditampilkan sebagai bar + jam reset di halaman Koneksi, peta, dan Asisten. Pemakaian lo di claude.ai ikut terhitung (angkanya diperbarui saat bot memanggil lagi; angka paling baru selalu di claude.ai → Settings → Usage). Kalau kena batas, AI istirahat **persis sampai jam reset**; kalau sesi 5 jam ≥90% (atau mingguan ≥95%), tugas kecil (tebak kategori, review) otomatis dihemat supaya sisa kuota buat lo.
 - **Batas harian bot** (default 40 panggilan), pilihan model (utama & ringan), dan saklar tiap fitur ada di halaman Asisten. Pemakaian rinci (panggilan, token, waktu jawab, log) di halaman Koneksi.
+
+## 13. Keamanan
+
+**Yang sudah dijaga otomatis oleh aplikasi:**
+
+- **Login**: password di-hash scrypt; sesi berupa cookie `httpOnly` bertanda tangan HMAC (otomatis `secure` di HTTPS), berlaku 30 hari. `SESSION_SECRET` di bawah 32 karakter ditolak.
+- **Keluar dari semua perangkat** (Pengaturan → Keamanan): mencabut semua sesi seketika, misalnya kalau HP hilang.
+- **Pembatasan percobaan**: 5 gagal per IP / 20 gagal total per 15 menit (password & kode WA). Kode WA 6 digit berlaku 5 menit, sekali pakai, hanya satu yang aktif, maks 5 per jam.
+- **Kabar WhatsApp langsung** (tidak menunggu jam tenang) setiap ada login baru (jam, perangkat, IP) dan saat ada 5 percobaan login gagal. Riwayatnya di Pengaturan → Keamanan.
+- **Semua halaman, API, dan server action wajib login** (dicek dua lapis: middleware + di setiap aksi). API yang mengubah data menolak permintaan dari situs lain (CSRF).
+- **Header keamanan**: Content-Security-Policy (hanya aset dari server sendiri), anti-clickjacking, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS saat HTTPS, tanpa header `X-Powered-By`. API tidak pernah di-cache.
+- **Izin file di server bersama**: saat web/bot mulai, `umask 077` dan `.env`, database, backup, sesi WhatsApp, serta konfigurasi Claude dirapatkan jadi hanya bisa dibaca user yang menjalankan aplikasi. Halaman Kesehatan sistem memberi tanda merah kalau ada yang masih terbuka.
+- **Bot WhatsApp** hanya melayani nomor terdaftar; nomor keluarga tidak bisa mengubah data dan tidak pernah dilayani AI. Pesan dipotong maks 4.000 karakter.
+- **Asisten AI**: token Claude dienkripsi; usulan AI divalidasi ulang di server dan baru jalan setelah `ok`; saat membaca foto, Claude hanya boleh membaca folder foto itu sendiri (izin lain otomatis ditolak); `ANTHROPIC_API_KEY` tidak pernah diteruskan.
+- **Upload foto** dicek dari isi file (JPG/PNG/WEBP/GIF), maks 8 MB.
+- **Dependency**: `npm audit` bersih (versi aman dipaksa lewat `overrides` di package.json). CI menjalankan typecheck, tes, dan build di setiap PR.
+
+**Yang perlu lo lakukan di server:**
+
+1. Jangan buka port 3000 langsung ke internet. Pakai **Cloudflare Tunnel** atau **Tailscale** (gratis) supaya otomatis HTTPS, lalu isi `WEB_HOST=127.0.0.1` dan `COOKIE_SECURE=1` di `.env`.
+2. Pastikan `.env` dan `data/` hanya bisa dibaca lo: `chmod 600 .env && chmod -R go-rwx data` (aplikasi juga merapatkannya otomatis saat start).
+3. Pakai password website yang panjang & unik (`npm run set-password <password>`), jangan sama dengan password lain.
+4. Jalankan DompetKos dengan user Linux sendiri. Siapa pun yang punya akses **root/sudo** di server tetap bisa membaca semua file — itu batas yang tidak bisa ditutup aplikasi.
+5. Simpan salinan backup (Pengaturan → Backup → Unduh) di luar server.
+6. Repo GitHub sebaiknya **private**: README, contoh `.env`, dan tes memuat nomor WhatsApp pemilik & orang tua.
 

@@ -11,6 +11,8 @@ import { getAllSettings } from "@/lib/services/settings";
 import { parseAturanBagi } from "@/lib/services/extra";
 import { wibDate, wibHM, fmtTanggal } from "@/lib/time";
 import { backupSekarang, hapusPenerima, kirimPesanTes, simpanPenerima, simpanPengingat, simpanUmum } from "../actions-lain";
+import { keluarSemuaPerangkat } from "../actions";
+import { berkasTerbuka } from "@/lib/keamanan/berkas";
 
 export const metadata = { title: "Pengaturan" };
 
@@ -22,7 +24,14 @@ function waktu(d: Date) {
 }
 
 export default async function PengaturanPage() {
-  const [penerima, pengingat, umum, outbox] = await Promise.all([listRecipients(prisma), getReminderSettings(prisma), getAllSettings(prisma), recentOutbox(prisma, 15)]);
+  const [penerima, pengingat, umum, outbox, masuk] = await Promise.all([
+    listRecipients(prisma),
+    getReminderSettings(prisma),
+    getAllSettings(prisma),
+    recentOutbox(prisma, 15),
+    prisma.activityLog.findMany({ where: { aksi: { in: ["login", "login_gagal", "keluar_semua"] } }, orderBy: { id: "desc" }, take: 8 }),
+  ]);
+  const terbuka = berkasTerbuka();
   const backups = listBackups();
 
   return (
@@ -192,6 +201,35 @@ export default async function PengaturanPage() {
           </Card>
         </div>
       </div>
+
+      <Card title="Keamanan" icon="shield">
+        {terbuka.length > 0 && (
+          <p className="mb-3 rounded-lg bg-bad-bg px-3 py-2 text-sm text-bad">
+            Izin file terlalu longgar (bisa dibaca user lain di server): {terbuka.join(", ")}. Restart DompetKos supaya dirapatkan otomatis, atau jalankan <code>chmod 600 .env &amp;&amp; chmod -R go-rwx data</code>.
+          </p>
+        )}
+        <p className="mb-2 text-sm text-muted">Setiap login baru dan 5 percobaan login gagal dikabari ke WhatsApp pemilik. Riwayat terakhir:</p>
+        {masuk.length ? (
+          <ul className="mb-3 divide-y divide-line text-sm">
+            {masuk.map((m) => (
+              <li key={m.id} className="flex items-start gap-2 py-2">
+                <Icon name={m.aksi === "login" ? "check-circle" : "alert"} size={16} className={`mt-0.5 shrink-0 ${m.aksi === "login" ? "text-ok" : "text-bad"}`} />
+                <span className="min-w-0 flex-1">{m.ringkasan}</span>
+                <span className="num shrink-0 text-xs text-muted">{waktu(m.waktu)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mb-3 text-sm text-muted">Belum ada catatan login.</p>
+        )}
+        <form action={keluarSemuaPerangkat}>
+          <ConfirmButton pesan="Keluar dari semua perangkat? Semua HP/laptop (termasuk yang ini) harus login ulang." className="btn-danger btn-sm">
+            <Icon name="logout" size={15} />
+            Keluar dari semua perangkat
+          </ConfirmButton>
+        </form>
+        <p className="mt-2 text-xs text-muted">Pakai kalau HP hilang, ada login yang bukan lo, atau habis login di perangkat orang lain.</p>
+      </Card>
 
       <Card title="Antrean pesan otomatis" icon="send">
         {outbox.length === 0 ? (

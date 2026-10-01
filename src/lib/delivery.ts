@@ -12,7 +12,7 @@ export const JAM_TENANG_SELESAI = 6;
 export const JEDA_MENIT = 60;
 
 /** Jenis yang diminta pengguna: bebas aturan jam tenang & jeda. */
-export const DIMINTA = new Set(["otp", "tes"]);
+export const DIMINTA = new Set(["otp", "tes", "keamanan"]);
 
 /** Batas tunda (menit) per jenis; lewat dari ini pesan dibuang. */
 const MAKS_TUNDA: Record<string, number> = {

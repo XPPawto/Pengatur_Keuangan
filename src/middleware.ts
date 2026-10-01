@@ -4,7 +4,12 @@ import { SESSION_COOKIE, verifySession } from "@/lib/auth/token";
 /** Semua halaman dan API wajib login, kecuali /login. */
 export async function middleware(req: NextRequest) {
   const ok = await verifySession(process.env.SESSION_SECRET, req.cookies.get(SESSION_COOKIE)?.value);
-  if (ok) return NextResponse.next();
+  if (ok) {
+    // tanda untuk layout: halaman terlindungi → layout mengecek versi sesi (sesi yang sudah dicabut ditolak)
+    const h = new Headers(req.headers);
+    h.set("x-dk-dilindungi", "1");
+    return NextResponse.next({ request: { headers: h } });
+  }
 
   if (req.nextUrl.pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Belum login" }, { status: 401 });

@@ -12,6 +12,7 @@ export function verifyPassword(password: string, stored: string | undefined): bo
   const [scheme, saltHex, hashHex] = stored.split(":");
   if (scheme !== "scrypt" || !saltHex || !hashHex) return false;
   const expected = Buffer.from(hashHex, "hex");
+  if (expected.length < 16 || password.length > 1024) return false;
   const actual = scryptSync(password, Buffer.from(saltHex, "hex"), expected.length);
   return timingSafeEqual(actual, expected);
 }

@@ -6,6 +6,7 @@ import { BACKUP_DIR, listBackups } from "./backup";
 import { enqueue } from "./outbox";
 import { recipientsFor } from "./recipients";
 import { statusAI } from "../ai/panggil";
+import { berkasTerbuka } from "../keamanan/berkas";
 
 export type Status = "ok" | "peringatan" | "masalah";
 
@@ -96,6 +97,14 @@ export async function cekKesehatan(db: Db, now: Date) {
     nama: "Penyimpanan",
     status: bebas !== null && bebas < 200 * MB ? "masalah" : bebas !== null && bebas < 1024 * MB ? "peringatan" : "ok",
     detail: `Database ${(ukuranDb / MB).toFixed(1)} MB · backup ${(ukuranFolder(BACKUP_DIR) / MB).toFixed(1)} MB${bebas !== null ? ` · sisa disk ${(bebas / 1024 / MB).toFixed(1)} GB` : ""}`,
+  });
+
+  const terbuka = berkasTerbuka();
+  cek.push({
+    kode: "izin",
+    nama: "Izin file data",
+    status: terbuka.length ? "masalah" : "ok",
+    detail: terbuka.length ? `Bisa dibaca user lain di server: ${terbuka.join(", ")}` : ".env dan folder data hanya bisa dibaca pemilik",
   });
 
   const ai = await statusAI(db, now);

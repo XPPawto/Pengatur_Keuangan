@@ -16,12 +16,13 @@ describe("password", () => {
 
 describe("token sesi", () => {
   it("valid dengan secret yang sama, ditolak kalau diubah/kedaluwarsa/secret beda", async () => {
-    const t = await signSession("s3cret");
-    expect(await verifySession("s3cret", t)).toBe(true);
-    expect(await verifySession("lain", t)).toBe(false);
-    expect(await verifySession("s3cret", t.slice(0, -2) + "xx")).toBe(false);
-    expect(await verifySession("s3cret", undefined)).toBe(false);
+    const S = "s3cret-yang-panjangnya-lebih-dari-32-karakter";
+    const t = await signSession(S);
+    expect(await verifySession(S, t)).toBe(true);
+    expect(await verifySession("lain-lain-lain-lain-lain-lain-lain-lain", t)).toBe(false);
+    expect(await verifySession(S, t.slice(0, -2) + "xx")).toBe(false);
+    expect(await verifySession(S, undefined)).toBe(false);
     expect(await verifySession(undefined, t)).toBe(false);
-    expect(await verifySession("s3cret", t, Date.now() + 31 * 24 * 3600 * 1000)).toBe(false);
+    expect(await verifySession(S, t, Date.now() + 31 * 24 * 3600 * 1000)).toBe(false);
   });
 });

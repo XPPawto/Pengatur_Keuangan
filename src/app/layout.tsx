@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import BottomNav from "@/components/BottomNav";
 import SideNav from "@/components/SideNav";
 import WaBanner from "@/components/WaBanner";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { isLoggedIn } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { getSetting } from "@/lib/services/settings";
@@ -30,6 +32,8 @@ export const dynamic = "force-dynamic";
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const login = await isLoggedIn();
+  // tanda tangan cookie sah tapi sesinya sudah dicabut ("Keluar dari semua perangkat") → wajib login ulang
+  if (!login && (await headers()).get("x-dk-dilindungi") === "1") redirect("/login");
   if (!login) {
     return (
       <html lang="id">

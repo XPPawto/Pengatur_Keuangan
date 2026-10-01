@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { Db } from "../db";
@@ -14,6 +13,7 @@ import { createShoppingItem } from "../services/shopping";
 import { enqueue } from "../services/outbox";
 import { recipientsFor } from "../services/recipients";
 import { AI_WORK_DIR, type AlasanGagal } from "./claude";
+import { jenisGambar, MAKS_GAMBAR } from "../keamanan/gambar";
 import { bangunKonteks } from "./konteks";
 import { LABEL_KONDISI, panggilAI } from "./panggil";
 import { SYSTEM_ASISTEN, SYSTEM_KATEGORI, SYSTEM_REVIEW, SYSTEM_STRUK } from "./prompt";
@@ -321,15 +321,18 @@ export type HasilFotoAI =
 export async function bacaFotoAI(db: Db, gambar: Buffer, now: Date): Promise<{ hasil: HasilFotoAI | null; alasan?: AlasanGagal }> {
   const dir = AI_WORK_DIR();
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const ext = gambar[0] === 0x89 ? "png" : gambar.subarray(8, 12).toString() === "WEBP" ? "webp" : "jpg";
-  const nama = `foto-${crypto.randomBytes(6).toString("hex")}.${ext}`;
-  const file = path.join(dir, nama);
+  const ext = jenisGambar(gambar);
+  if (!ext || gambar.length > MAKS_GAMBAR) return { hasil: null, alasan: "gagal" };
+  // folder kerja unik per foto: Claude hanya diizinkan membaca isi folder ini
+  const kerja = fs.mkdtempSync(path.join(dir, "foto-"));
+  const nama = `foto.${ext}`;
+  const file = path.join(kerja, nama);
   fs.writeFileSync(file, gambar, { mode: 0o600 });
   try {
     const h = await panggilAI(db, {
       fitur: "struk",
       system: SYSTEM_STRUK,
-      prompt: `Buka dan baca file gambar ./${nama} (path lengkap: ${file}). Tanggal hari ini ${wibDate(now)}.`,
+      prompt: `Buka dan baca file gambar ./${nama} di folder kerja saat ini. Tanggal hari ini ${wibDate(now)}.`,
       gambar: file,
       now,
       timeoutMs: 120_000,
@@ -366,7 +369,7 @@ export async function bacaFotoAI(db: Db, gambar: Buffer, now: Date): Promise<{ h
     }
     return { hasil: { jenis: "lain", keterangan: keterangan || "Foto ini bukan struk atau bukti transfer." } };
   } finally {
-    fs.rmSync(file, { force: true });
+    fs.rmSync(kerja, { recursive: true, force: true });
   }
 }
 

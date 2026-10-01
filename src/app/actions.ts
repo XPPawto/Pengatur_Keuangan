@@ -1,11 +1,12 @@
 "use server";
 
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { verifyPassword } from "@/lib/auth/password";
-import { catatLoginGagal, loginTerkunci, requireLogin, resetLoginGagal } from "@/lib/auth/session";
-import { SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "@/lib/auth/token";
+import { cabutSemuaSesi, catatLoginGagal, ipPengunjung, loginTerkunci, requireLogin, resetLoginGagal, versiSesi } from "@/lib/auth/session";
+import { catatLoginGagalKeLog, kabarLoginBaru } from "@/lib/services/keamanan";
+import { SECRET_MIN, SESSION_COOKIE, SESSION_TTL_SECONDS, signSession } from "@/lib/auth/token";
 import { prisma } from "@/lib/db";
 import { parseAmount } from "@/lib/parser/amount";
 import { AppError } from "@/lib/services/errors";
@@ -16,6 +17,7 @@ import { markTanpaJajan } from "@/lib/services/daily";
 import { deleteTransaction, recordExpense, updateTransaction } from "@/lib/services/transactions";
 import { ENVELOPE_KODE, type EnvelopeKode } from "@/lib/types";
 import { rp } from "@/lib/money";
+import { AKTOR_WEB, logActivity } from "@/lib/services/activity-log";
 import { wibDate } from "@/lib/time";
 
 export interface FormState {
@@ -40,35 +42,58 @@ function kodeValid(v: FormDataEntryValue | null): EnvelopeKode | null {
 
 // ---------- login ----------
 
-export async function login(_: FormState, form: FormData): Promise<FormState> {
-  if (loginTerkunci()) return { error: "Kebanyakan salah. Coba lagi 15 menit lagi." };
+const TERKUNCI = "Kebanyakan percobaan gagal. Coba lagi 15 menit lagi.";
+
+function cekSecret(): string | { error: string } {
   const secret = process.env.SESSION_SECRET;
-  if (!secret || !process.env.APP_PASSWORD_HASH) {
-    return { error: "Password belum diatur. Jalankan `npm run setup` (atau isi APP_PASSWORD_HASH dan SESSION_SECRET di .env)." };
-  }
-  const pw = String(form.get("password") ?? "");
+  if (!secret) return { error: "SESSION_SECRET belum diatur di .env. Jalankan `npm run setup`." };
+  if (secret.length < SECRET_MIN) return { error: `SESSION_SECRET terlalu pendek (minimal ${SECRET_MIN} karakter). Ganti dengan string acak panjang, mis. hasil \`openssl rand -hex 32\`.` };
+  return secret;
+}
+
+async function gagalMasuk(ip: string, cara: string): Promise<void> {
+  const n = catatLoginGagal(ip);
+  await catatLoginGagalKeLog(prisma, { ip, cara, jumlah: n, now: new Date() }).catch(() => {});
+}
+
+async function berhasilMasuk(ip: string, cara: string, secret: string): Promise<never> {
+  resetLoginGagal(ip);
+  await setSessionCookie(secret);
+  const ua = (await headers()).get("user-agent") ?? "";
+  await kabarLoginBaru(prisma, { ip, cara, ua, now: new Date() }).catch(() => {});
+  redirect("/");
+}
+
+export async function login(_: FormState, form: FormData): Promise<FormState> {
+  const ip = await ipPengunjung();
+  if (loginTerkunci(ip)) return { error: TERKUNCI };
+  const secret = cekSecret();
+  if (typeof secret !== "string") return secret;
+  if (!process.env.APP_PASSWORD_HASH) return { error: "Password belum diatur. Jalankan `npm run setup` (atau isi APP_PASSWORD_HASH di .env)." };
+  const pw = String(form.get("password") ?? "").slice(0, 256);
   if (!verifyPassword(pw, process.env.APP_PASSWORD_HASH)) {
-    catatLoginGagal();
+    await gagalMasuk(ip, "password");
     return { error: "Password salah." };
   }
-  resetLoginGagal();
-  await setSessionCookie(secret);
-  redirect("/");
+  return berhasilMasuk(ip, "password", secret);
 }
 
 async function setSessionCookie(secret: string) {
   const jar = await cookies();
-  jar.set(SESSION_COOKIE, await signSession(secret), {
+  const h = await headers();
+  jar.set(SESSION_COOKIE, await signSession(secret, Date.now(), await versiSesi()), {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.COOKIE_SECURE === "1",
+    // otomatis secure kalau diakses lewat HTTPS (tunnel / reverse proxy)
+    secure: process.env.COOKIE_SECURE === "1" || h.get("x-forwarded-proto") === "https",
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
   });
 }
 
 export async function mintaKodeLogin(_: FormState): Promise<FormState> {
-  if (loginTerkunci()) return { error: "Kebanyakan percobaan. Coba lagi 15 menit lagi." };
+  const ip = await ipPengunjung();
+  if (loginTerkunci(ip)) return { error: TERKUNCI };
   try {
     await requestLoginCode(prisma, new Date());
   } catch (e) {
@@ -78,19 +103,28 @@ export async function mintaKodeLogin(_: FormState): Promise<FormState> {
 }
 
 export async function loginKode(_: FormState, form: FormData): Promise<FormState> {
-  if (loginTerkunci()) return { error: "Kebanyakan percobaan. Coba lagi 15 menit lagi." };
-  const secret = process.env.SESSION_SECRET;
-  if (!secret) return { error: "SESSION_SECRET belum diatur di .env." };
-  if (!(await verifyLoginCode(prisma, String(form.get("kode") ?? ""), new Date()))) {
-    catatLoginGagal();
+  const ip = await ipPengunjung();
+  if (loginTerkunci(ip)) return { error: TERKUNCI };
+  const secret = cekSecret();
+  if (typeof secret !== "string") return secret;
+  if (!(await verifyLoginCode(prisma, String(form.get("kode") ?? "").slice(0, 32), new Date()))) {
+    await gagalMasuk(ip, "kode WhatsApp");
     return { error: "Kode salah atau sudah kedaluwarsa." };
   }
-  resetLoginGagal();
-  await setSessionCookie(secret);
-  redirect("/");
+  return berhasilMasuk(ip, "kode WhatsApp", secret);
 }
 
 export async function logout() {
+  const jar = await cookies();
+  jar.delete(SESSION_COOKIE);
+  redirect("/login");
+}
+
+/** Cabut semua sesi (semua HP/laptop harus login ulang), termasuk perangkat ini. */
+export async function keluarSemuaPerangkat() {
+  await requireLogin();
+  await cabutSemuaSesi();
+  await logActivity(prisma, AKTOR_WEB, "keluar_semua", "Keluar dari semua perangkat (semua sesi dicabut)", { now: new Date() });
   const jar = await cookies();
   jar.delete(SESSION_COOKIE);
   redirect("/login");
