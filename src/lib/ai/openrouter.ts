@@ -21,7 +21,19 @@ export interface ModelGratis {
 
 let cacheModel: { daftar: ModelGratis[]; sampai: number } | null = null;
 
-/** Daftar model gratis dari OpenRouter (publik, tanpa API key), di-cache 6 jam. */
+/** Isi cache daftar model (dipakai tes). */
+export function aturDaftarModel(daftar: ModelGratis[] | null) {
+  cacheModel = daftar ? { daftar, sampai: Date.now() + 6 * 3600_000 } : null;
+}
+
+// Keluarga model umum yang biasanya bisa dipakai siapa saja; didahulukan di mode otomatis.
+const DIDAHULUKAN = [/^deepseek\//, /^meta-llama\//, /^qwen\//, /^google\/gemma/, /^mistralai\//, /^openai\/gpt-oss/, /^z-ai\//, /^moonshotai\//, /^nvidia\//];
+const peringkat = (id: string) => {
+  const i = DIDAHULUKAN.findIndex((r) => r.test(id));
+  return i < 0 ? DIDAHULUKAN.length : i;
+};
+
+/** Daftar model gratis dari OpenRouter (publik, tanpa API key), di-cache 6 jam. Urutan = urutan coba mode otomatis. */
 export async function daftarModelGratis(): Promise<ModelGratis[]> {
   if (cacheModel && cacheModel.sampai > Date.now()) return cacheModel.daftar;
   const r = await fetch(`${API}/models`, { signal: AbortSignal.timeout(15_000) });
@@ -30,14 +42,30 @@ export async function daftarModelGratis(): Promise<ModelGratis[]> {
   const daftar = (j.data ?? [])
     .filter((m) => modelGratis(m.id) && Object.values(m.pricing ?? {}).every((v) => Number(v) === 0))
     .map((m) => ({ id: m.id, nama: m.name ?? m.id, konteks: m.context_length ?? 0, gambar: !!m.architecture?.input_modalities?.includes("image") }))
-    .sort((a, b) => b.konteks - a.konteks);
+    .filter((m) => m.konteks === 0 || m.konteks >= 8000)
+    .sort((a, b) => peringkat(a.id) - peringkat(b.id) || b.konteks - a.konteks);
   cacheModel = { daftar, sampai: Date.now() + 6 * 3600_000 };
   return daftar;
 }
 
+/** Pengaturan privasi akun OpenRouter memblokir semua model gratis (bukan masalah satu model). */
+export const blokirPrivasi = (pesan: string) => /data policy|privacy/i.test(pesan);
+
+/**
+ * Error yang khusus satu model, jadi model gratis lain masih layak dicoba:
+ * "rusak" = model ini memang tidak bisa dipakai akun ini (diingat lama), "sementara" = penuh/limit di penyedianya.
+ */
+export function masalahModel(pesan: string): "rusak" | "sementara" | null {
+  if (blokirPrivasi(pesan)) return null;
+  if (/only available (on|to|for)|agentic|no endpoints|not a valid model|model.{0,40}(not found|not available|not supported|unavailable|no longer)|is not available|deprecated|does not support/i.test(pesan)) return "rusak";
+  if (/rate.?limited upstream|temporarily rate|provider returned error|upstream/i.test(pesan)) return "sementara";
+  return null;
+}
+
 export function golongkanOpenRouter(status: number, pesan: string): AlasanGagal {
-  if (status === 401 || status === 403) return "belum_login";
-  if (status === 429 || /rate.?limit|quota/i.test(pesan)) return "limit";
+  if (status === 401 || (status === 403 && /api key|key (is )?(invalid|disabled)|user not found|unauthori[sz]ed/i.test(pesan))) return "belum_login";
+  if (masalahModel(pesan) === "sementara") return "sibuk";
+  if (status === 402 || status === 429 || /free-models-per|rate.?limit|quota/i.test(pesan)) return "limit";
   if (status >= 500 || status === 408) return "sibuk";
   return "gagal";
 }
@@ -75,6 +103,7 @@ export const penjalanOpenRouter: PenjalanOpenRouter = async (p) => {
   const token = j?.usage ? { masuk: Math.round(j.usage.prompt_tokens ?? 0), keluar: Math.round(j.usage.completion_tokens ?? 0) } : undefined;
   const teks = j?.choices?.[0]?.message?.content;
   if (r.ok && !j?.error && typeof teks === "string" && teks.trim()) return hasil({ ok: true, teks, token });
-  const pesan = (j?.error?.message || `OpenRouter ${r.status}`).slice(0, 300);
+  let pesan = (j?.error?.message || `OpenRouter ${r.status}`).slice(0, 300);
+  if (blokirPrivasi(pesan)) pesan = `${pesan} — Buka openrouter.ai/settings/privacy lalu izinkan model gratis (free endpoints), kemudian tes lagi.`;
   return hasil({ ok: false, alasan: golongkanOpenRouter(j?.error?.code ?? r.status, pesan), pesan, token });
 };

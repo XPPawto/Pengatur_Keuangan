@@ -7,8 +7,8 @@ import { handleMessage } from "@/lib/bot/handler";
 import { fromWib } from "@/lib/time";
 import type { HasilClaude } from "@/lib/ai/claude";
 import { golongkanGemini, penjalanGeminiCli } from "@/lib/ai/gemini";
-import { penjalanOpenRouter } from "@/lib/ai/openrouter";
-import { panggilAI, pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI, statusAI, urutanPenyedia } from "@/lib/ai/panggil";
+import { aturDaftarModel, golongkanOpenRouter, masalahModel, penjalanOpenRouter } from "@/lib/ai/openrouter";
+import { panggilAI, pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI, statusAI, statusCadangan, tesKoneksiAI, urutanPenyedia } from "@/lib/ai/panggil";
 import { setSetting } from "@/lib/services/settings";
 import { resetDb } from "./helpers";
 
@@ -35,7 +35,10 @@ beforeEach(async () => {
     }),
   ];
 });
-afterEach(() => pulih.forEach((f) => f()));
+afterEach(() => {
+  pulih.forEach((f) => f());
+  aturDaftarModel(null);
+});
 afterAll(() => db.$disconnect());
 
 async function nyalakanCadangan() {
@@ -128,6 +131,77 @@ describe("OpenRouter: hanya model gratis", () => {
     const h = await tanya(at("2026-10-05"));
     expect(h.ok).toBe(false);
     expect(dipanggil).toEqual([]);
+  });
+});
+
+describe("OpenRouter mode otomatis", () => {
+  const AGENT = "thinkingmachines/inkling-small:free is only available on agentic harnesses. Try plugging it into a coding agent or productivity app listed on https://openrouter.ai/apps";
+  const gagalPesan = (alasan: Extract<HasilClaude, { ok: false }>["alasan"], pesan: string): HasilClaude => ({ ok: false, alasan, pesan, durasiMs: 3 });
+
+  beforeEach(async () => {
+    await setSetting(db, "ai_openrouter_aktif", "1");
+    await simpanKunciCadangan(db, "openrouter", KUNCI_O);
+    aturDaftarModel([
+      { id: "deepseek/deepseek-chat:free", nama: "DeepSeek", konteks: 64000, gambar: false },
+      { id: "meta-llama/llama-3.3-70b-instruct:free", nama: "Llama", konteks: 128000, gambar: false },
+      { id: "google/gemma-3-27b-it:free", nama: "Gemma", konteks: 96000, gambar: true },
+    ]);
+  });
+
+  it("golongan error: model khusus agent bukan 'token ditolak'", () => {
+    expect(golongkanOpenRouter(403, AGENT)).toBe("gagal");
+    expect(masalahModel(AGENT)).toBe("rusak");
+    expect(golongkanOpenRouter(401, "No auth credentials found")).toBe("belum_login");
+    expect(golongkanOpenRouter(429, "Rate limit exceeded: free-models-per-day")).toBe("limit");
+    expect(golongkanOpenRouter(429, "deepseek/deepseek-chat:free is temporarily rate-limited upstream")).toBe("sibuk");
+    expect(masalahModel("No endpoints found matching your data policy (Free model publication)")).toBeNull();
+  });
+
+  it("model yang menolak dilewati, model berikutnya menjawab, dan diingat untuk permintaan berikutnya", async () => {
+    let n = 0;
+    jawab.openrouter = () => (n++ === 0 ? gagalPesan("gagal", AGENT) : ok("llama"));
+    const h = await tesKoneksiAI(db, at("2026-10-05"), "openrouter");
+    expect(h.ok).toBe(true);
+    expect(dipanggil).toEqual(["openrouter:deepseek/deepseek-chat:free", "openrouter:meta-llama/llama-3.3-70b-instruct:free"]);
+    const log = await db.aiCall.findFirst({ where: { penyedia: "openrouter" } });
+    expect(log).toMatchObject({ status: "ok", model: "meta-llama/llama-3.3-70b-instruct:free" });
+    expect(log?.catatan).toContain("deepseek/deepseek-chat:free");
+    const [, o] = await statusCadangan(db);
+    expect(o).toMatchObject({ kondisi: "ok", modelTerakhir: "meta-llama/llama-3.3-70b-instruct:free" });
+
+    dipanggil = [];
+    jawab.openrouter = () => ok("llama");
+    await tesKoneksiAI(db, at("2026-10-05", 13), "openrouter");
+    expect(dipanggil).toEqual(["openrouter:meta-llama/llama-3.3-70b-instruct:free"]);
+  });
+
+  it("foto hanya ke model yang bisa membaca gambar", async () => {
+    const r = await panggilAI(db, { fitur: "struk", system: "s", prompt: "p", gambar: "/tmp/x.jpg", now: at("2026-10-05"), penyedia: "openrouter" });
+    expect(r.ok).toBe(true);
+    expect(dipanggil).toEqual(["openrouter:google/gemma-3-27b-it:free"]);
+  });
+
+  it("masalah akun (privasi/batas harian) tidak mencoba model lain dan tidak menandai model", async () => {
+    jawab.openrouter = () => gagalPesan("gagal", "No endpoints found matching your data policy (Free model publication)");
+    const h = await tesKoneksiAI(db, at("2026-10-05"), "openrouter");
+    expect(h.ok).toBe(false);
+    expect(dipanggil).toHaveLength(1);
+    expect(await db.setting.findUnique({ where: { kunci: "ai_openrouter_model_buruk" } })).toBeNull();
+  });
+
+  it("semua model menolak → berhenti setelah 3 dan pesannya jelas", async () => {
+    jawab.openrouter = () => gagalPesan("gagal", AGENT);
+    const h = await tesKoneksiAI(db, at("2026-10-05"), "openrouter");
+    expect(h.ok).toBe(false);
+    expect(dipanggil).toHaveLength(3);
+    expect(h.ok ? "" : h.pesan).toContain("sedang tidak bisa dipakai");
+  });
+
+  it("model pilihan sendiri tidak diganti diam-diam", async () => {
+    await setSetting(db, "ai_openrouter_model", "deepseek/deepseek-chat:free");
+    jawab.openrouter = () => gagalPesan("gagal", AGENT);
+    await tesKoneksiAI(db, at("2026-10-05"), "openrouter");
+    expect(dipanggil).toEqual(["openrouter:deepseek/deepseek-chat:free"]);
   });
 });
 

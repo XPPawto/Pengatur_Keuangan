@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { AKTOR_WEB } from "@/lib/services/activity-log";
 import { setSetting } from "@/lib/services/settings";
 import { hapusRiwayat, ingat, jalankanAksiAI, lupakan, tanyaAsisten, validasiAksi, type AksiAI } from "@/lib/ai/asisten";
-import { CADANGAN, LABEL_KONDISI, LABEL_PENYEDIA, simpanKunciCadangan, simpanTokenAI, tesKoneksiAI, type PenyediaCadangan } from "@/lib/ai/panggil";
+import { CADANGAN, LABEL_KONDISI, LABEL_PENYEDIA, labelKondisiCadangan, simpanKunciCadangan, simpanTokenAI, tesKoneksiAI, type KondisiAI, type PenyediaCadangan } from "@/lib/ai/panggil";
 import { modelGratis } from "@/lib/ai/openrouter";
 import type { FormState } from "./actions";
 
@@ -139,7 +139,7 @@ export async function simpanKunciCadanganAction(_: FormState, form: FormData): P
   }
   const h = await tesKoneksiAI(prisma, new Date(), p);
   revalidatePath("/", "layout");
-  return h.ok ? { ok: `API key ${LABEL_PENYEDIA[p]} tersimpan (terenkripsi) dan tersambung.` } : { error: `Tersimpan, tapi tes gagal: ${LABEL_KONDISI[h.ok ? "ok" : (h.alasan as keyof typeof LABEL_KONDISI)] ?? ""} ${h.ok ? "" : h.pesan}` };
+  return h.ok ? { ok: `API key ${LABEL_PENYEDIA[p]} tersimpan (terenkripsi) dan tersambung.` } : { error: `Tersimpan, tapi tes gagal (${labelKondisiCadangan(h.alasan as KondisiAI)}): ${h.pesan}` };
 }
 
 export async function hapusKunciCadanganAction(form: FormData) {
@@ -156,7 +156,7 @@ export async function tesCadanganAction(_: FormState, form: FormData): Promise<F
   const h = await tesKoneksiAI(prisma, new Date(), p);
   revalidatePath("/", "layout");
   if (h.ok) return { ok: `Tersambung ke ${LABEL_PENYEDIA[p]} (${(h.durasiMs / 1000).toFixed(1)} detik).` };
-  return { error: `${LABEL_KONDISI[h.alasan as keyof typeof LABEL_KONDISI] ?? "Gagal"}: ${h.pesan}` };
+  return { error: `${labelKondisiCadangan(h.alasan as KondisiAI)}: ${h.pesan}` };
 }
 
 export async function simpanCadanganAction(_: FormState, form: FormData): Promise<FormState> {

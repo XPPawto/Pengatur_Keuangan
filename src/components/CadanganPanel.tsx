@@ -142,7 +142,7 @@ function Judul({ c, ikon }: { c: Cadangan; ikon: "sparkles" | "transfer" }) {
         <Icon name={ikon} size={18} className="text-muted" />
         {c.label}
       </h3>
-      <Badge tone={nada(c)}>{!c.aktif ? "Mati" : c.labelKondisi}</Badge>
+      <Badge tone={nada(c)}>{!c.aktif ? "Nonaktif" : c.labelKondisi}</Badge>
     </div>
   );
 }
@@ -154,8 +154,10 @@ function Kunci({ c, placeholder }: { c: Cadangan; placeholder: string }) {
         <p className="text-sm">
           {c.sumber === "login" ? "Login akun Google tersimpan di folder bot" : <>API key <span className="num">{c.samaran}</span>{c.sumber === "env" ? " (.env)" : ""}</>}
           {c.model ? <span className="text-muted"> · model {c.model}</span> : null}
+          {c.modelTerakhir && c.modelTerakhir !== c.model ? <span className="text-muted"> · terakhir pakai {c.modelTerakhir}</span> : null}
         </p>
       )}
+      {c.ada && !c.aktif && <p className="rounded-lg bg-subtle px-3 py-2 text-xs text-muted">Sudah tersambung, tapi belum dinyalakan. Centang {c.label} di &quot;Urutan &amp; model&quot; lalu Simpan supaya dipakai saat Claude tidak bisa.</p>}
       {c.pesan && !c.siap && c.ada && <p className="rounded-lg bg-warn-bg px-3 py-2 text-xs text-warn">{c.pesan}</p>}
       {c.ada && (
         <ActionForm action={tesCadanganAction} submit={<><Icon name="refresh" size={15} />Tes koneksi</>} submitClass="btn-secondary btn-sm w-full">

@@ -6,7 +6,7 @@ import { getSetting, getSettingNumber } from "../services/settings";
 import { adaLoginFolder, JENDELA, penjalanCli, type AlasanGagal, type HasilClaude, type InfoBatas, type JendelaBatas, type NamaJendela, type Penjalan } from "./claude";
 import { dekripsi, enkripsi, samarkan } from "./rahasia";
 import { adaLoginGemini, penjalanGeminiCli, type PenjalanGemini } from "./gemini";
-import { daftarModelGratis, modelGratis, penjalanOpenRouter, type PenjalanOpenRouter } from "./openrouter";
+import { daftarModelGratis, masalahModel, modelGratis, penjalanOpenRouter, type PenjalanOpenRouter } from "./openrouter";
 
 export type Penyedia = "claude" | "gemini" | "openrouter";
 export const CADANGAN = ["gemini", "openrouter"] as const;
@@ -452,6 +452,8 @@ interface StatusCadangan {
   pesan: string;
   terakhirCoba: string | null;
   terakhirOk: string | null;
+  /** model yang terakhir dipakai (berguna di mode otomatis OpenRouter) */
+  model?: string | null;
 }
 
 async function bacaStatusCadangan(db: Db, p: PenyediaCadangan): Promise<StatusCadangan> {
@@ -466,13 +468,41 @@ async function bacaStatusCadangan(db: Db, p: PenyediaCadangan): Promise<StatusCa
 
 const TAHAN_CADANGAN: Partial<Record<KondisiAI, number>> = { belum_login: 10 * 60_000, limit: 30 * 60_000, tidak_ada: 10 * 60_000 };
 
-async function modelCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI): Promise<string | null> {
-  if (p === "gemini") return getSetting(db, r.ringan ? "ai_gemini_model_ringan" : "ai_gemini_model");
+// ---- model OpenRouter yang menolak akun ini (mis. "hanya untuk aplikasi agent") dilewati sementara di mode otomatis
+const KUNCI_MODEL_BURUK = "ai_openrouter_model_buruk";
+const LEWATI_MS = { rusak: 7 * 24 * 3600_000, sementara: 15 * 60_000 } as const;
+/** Maksimal model yang dicoba dalam satu permintaan mode otomatis (supaya balasan tidak kelamaan). */
+const MAKS_COBA_OR = 3;
+
+async function bacaModelBuruk(db: Db, now: Date): Promise<Record<string, string>> {
+  const row = await db.setting.findUnique({ where: { kunci: KUNCI_MODEL_BURUK } });
+  try {
+    const isi = row ? (JSON.parse(row.nilai) as Record<string, string>) : {};
+    return Object.fromEntries(Object.entries(isi).filter(([, s]) => new Date(s) > now));
+  } catch {
+    return {};
+  }
+}
+
+async function tandaiModelBuruk(db: Db, model: string, jenis: keyof typeof LEWATI_MS, now: Date) {
+  const isi = { ...(await bacaModelBuruk(db, now)), [model]: new Date(now.getTime() + LEWATI_MS[jenis]).toISOString() };
+  const nilai = JSON.stringify(isi);
+  await db.setting.upsert({ where: { kunci: KUNCI_MODEL_BURUK }, update: { nilai }, create: { kunci: KUNCI_MODEL_BURUK, nilai } });
+}
+
+/** Model yang akan dicoba berurutan. Gemini & OpenRouter dengan model pilihan: satu; OpenRouter otomatis: beberapa. */
+async function modelCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI): Promise<{ daftar: string[]; otomatis: boolean }> {
+  if (p === "gemini") {
+    const m = await getSetting(db, r.ringan ? "ai_gemini_model_ringan" : "ai_gemini_model");
+    return { daftar: m ? [m] : [], otomatis: false };
+  }
   const pilih = await getSetting(db, "ai_openrouter_model");
-  if (pilih) return modelGratis(pilih) ? pilih : null;
-  // otomatis: model gratis dengan konteks terbesar (yang bisa membaca gambar kalau perlu)
-  const daftar = await daftarModelGratis().catch(() => []);
-  return (r.gambar ? daftar.find((m) => m.gambar) : daftar[0])?.id ?? null;
+  if (pilih) return { daftar: modelGratis(pilih) ? [pilih] : [], otomatis: false };
+  const semua = (await daftarModelGratis().catch(() => [])).filter((m) => !r.gambar || m.gambar).map((m) => m.id);
+  const buruk = await bacaModelBuruk(db, r.now);
+  const layak = semua.filter((id) => !buruk[id]);
+  // kalau semuanya pernah ditandai, tetap coba daripada tidak sama sekali
+  return { daftar: (layak.length ? layak : semua).slice(0, MAKS_COBA_OR), otomatis: true };
 }
 
 async function cobaCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, utama: boolean): Promise<{ hasil: HasilClaude; tercatat: boolean }> {
@@ -482,33 +512,60 @@ async function cobaCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, utama:
   const st = await bacaStatusCadangan(db, p);
   const tahan = TAHAN_CADANGAN[st.status];
   if (!r.paksa && tahan && st.terakhirCoba && r.now.getTime() - new Date(st.terakhirCoba).getTime() < tahan) return tidak(st.status as AlasanGagal, st.pesan);
-  const model = await modelCadangan(db, p, r);
-  if (!model) return tidak("gagal", p === "openrouter" ? "Belum ada model gratis OpenRouter yang cocok." : "Model Gemini belum diatur.");
+  const { daftar, otomatis } = await modelCadangan(db, p, r);
+  if (!daftar.length) return tidak("gagal", p === "openrouter" ? "Belum ada model gratis OpenRouter yang cocok." : "Model Gemini belum diatur.");
 
-  const log = await db.aiCall.create({ data: { waktu: r.now, fitur: r.fitur, penyedia: p, utama, model, status: "berjalan" } });
-  let hasil: HasilClaude;
-  try {
-    const dasar = { system: r.system, prompt: r.prompt, model, gambar: r.gambar, timeoutMs: r.timeoutMs, token: null };
-    hasil = await (p === "gemini" ? slot(() => penjalanGemini({ ...dasar, apiKey: k.kunci })) : penjalanOR({ ...dasar, apiKey: k.kunci! }));
-  } catch (e) {
-    hasil = gagal("gagal", e instanceof Error ? e.message : String(e));
+  const log = await db.aiCall.create({ data: { waktu: r.now, fitur: r.fitur, penyedia: p, utama, model: daftar[0], status: "berjalan" } });
+  let hasil: HasilClaude = gagal("gagal", "Tidak ada model yang dicoba.");
+  let model = daftar[0];
+  const dilewati: string[] = [];
+  const mulai = Date.now();
+  for (const m of daftar) {
+    model = m;
+    try {
+      const dasar = { system: r.system, prompt: r.prompt, model: m, gambar: r.gambar, timeoutMs: r.timeoutMs };
+      hasil = await (p === "gemini" ? slot(() => penjalanGemini({ ...dasar, apiKey: k.kunci })) : penjalanOR({ ...dasar, apiKey: k.kunci! }));
+    } catch (e) {
+      hasil = gagal("gagal", e instanceof Error ? e.message : String(e));
+    }
+    if (hasil.ok || !otomatis) break;
+    const jenis = masalahModel(hasil.pesan);
+    if (!jenis) break; // masalah akun/kunci/batas harian: model lain juga akan gagal
+    await tandaiModelBuruk(db, m, jenis, r.now);
+    dilewati.push(m);
+  }
+  if (dilewati.length && hasil.ok) hasil = { ...hasil, durasiMs: Date.now() - mulai };
+  if (dilewati.length && !hasil.ok && dilewati.includes(model)) {
+    hasil = { ...hasil, pesan: `Model gratis yang dicoba (${dilewati.join(", ")}) sedang tidak bisa dipakai. Coba lagi nanti atau pilih model lain di "Urutan & model". Terakhir: ${hasil.pesan}`.slice(0, 500) };
   }
   await db.aiCall.update({
     where: { id: log.id },
-    data: { status: hasil.ok ? "ok" : hasil.alasan, durasiMs: hasil.durasiMs, tokenMasuk: hasil.token?.masuk ?? 0, tokenKeluar: hasil.token?.keluar ?? 0, catatan: hasil.ok ? null : hasil.pesan.slice(0, 300) },
+    data: {
+      model,
+      status: hasil.ok ? "ok" : hasil.alasan,
+      durasiMs: dilewati.length ? Date.now() - mulai : hasil.durasiMs,
+      tokenMasuk: hasil.token?.masuk ?? 0,
+      tokenKeluar: hasil.token?.keluar ?? 0,
+      catatan: hasil.ok ? (dilewati.length ? `dilewati: ${dilewati.join(", ")}`.slice(0, 300) : null) : hasil.pesan.slice(0, 300),
+    },
   });
   const iso = r.now.toISOString();
-  const nilai = JSON.stringify({ status: (hasil.ok ? "ok" : hasil.alasan) as KondisiAI, pesan: hasil.ok ? "" : hasil.pesan, terakhirCoba: iso, terakhirOk: hasil.ok ? iso : st.terakhirOk } satisfies StatusCadangan);
+  const nilai = JSON.stringify({ status: (hasil.ok ? "ok" : hasil.alasan) as KondisiAI, pesan: hasil.ok ? "" : hasil.pesan, terakhirCoba: iso, terakhirOk: hasil.ok ? iso : st.terakhirOk, model } satisfies StatusCadangan);
   await db.setting.upsert({ where: { kunci: `ai_status_${p}` }, update: { nilai }, create: { kunci: `ai_status_${p}`, nilai } });
   return { hasil, tercatat: true };
 }
 
 const LABEL_KONDISI_CADANGAN: Partial<Record<KondisiAI, string>> = {
-  belum_login: "Kunci/login ditolak",
+  belum_login: "API key/login ditolak",
   limit: "Kena batas gratis",
+  sibuk: "Server penyedia sibuk",
+  timeout: "Lambat merespons",
   tidak_ada: "Gemini CLI belum terpasang",
   belum_diatur: "Belum disambungkan",
+  gagal: "Gagal",
 };
+
+export const labelKondisiCadangan = (k: KondisiAI) => (k === "ok" ? "Aktif" : k === "belum_dicek" ? "Belum dicek" : (LABEL_KONDISI_CADANGAN[k] ?? LABEL_KONDISI[k] ?? k));
 
 /** Ringkasan penyedia cadangan untuk halaman Koneksi, peta, dan status asisten. */
 export async function statusCadangan(db: Db) {
@@ -531,9 +588,10 @@ export async function statusCadangan(db: Db) {
         samaran: k.kunci ? samarkan(k.kunci) : null,
         rusak: k.rusak,
         kondisi,
-        labelKondisi: kondisi === "ok" ? "Aktif" : kondisi === "belum_dicek" ? "Belum dicek" : (LABEL_KONDISI_CADANGAN[kondisi] ?? LABEL_KONDISI[kondisi] ?? kondisi),
+        labelKondisi: labelKondisiCadangan(kondisi),
         siap: aktif === "1" && ada && !["belum_login", "limit", "tidak_ada", "belum_diatur"].includes(kondisi),
         model: model || (p === "openrouter" ? "otomatis (gratis)" : ""),
+        modelTerakhir: st.model ?? null,
         pesan: st.pesan,
         terakhirOk: st.terakhirOk,
       };
