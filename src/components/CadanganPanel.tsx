@@ -12,6 +12,7 @@ type Cadangan = Awaited<ReturnType<typeof statusCadangan>>[number];
 
 // Seri 2.5 sudah ditutup untuk akun baru (error "no longer available to new users"). Daftar ini hanya pilihan cepat:
 // nilai yang sedang aktif selalu ikut tampil, jadi model lain tetap bisa dipakai lewat pengaturan.
+const MODEL_GROQ = ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"];
 const MODEL_GEMINI = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
 
 function nada(c: Cadangan): "ok" | "warn" | "neutral" {
@@ -30,6 +31,10 @@ export default function CadanganPanel({
   modelGratis,
   autoGemini,
   autoOpenRouter,
+  autoGroq,
+  modelGroq,
+  modelGroqRingan,
+  groqDitemukan,
   statModel,
   geminiDitemukan,
 }: {
@@ -42,6 +47,11 @@ export default function CadanganPanel({
   /** pindah ke model lain otomatis kalau modelnya penuh / timeout / ditutup */
   autoGemini: boolean;
   autoOpenRouter: boolean;
+  autoGroq: boolean;
+  modelGroq: string;
+  modelGroqRingan: string;
+  /** model Groq yang ditemukan dari API Groq untuk key ini; null = belum dimuat / tidak bisa diambil */
+  groqDitemukan: string[] | null;
   /** statistik belajar otomatis per model */
   statModel: BarisStatModel[];
   /** model Gemini yang ditemukan dari Google untuk key ini; null = belum dimuat / tidak bisa diambil */
@@ -50,6 +60,7 @@ export default function CadanganPanel({
 }) {
   const g = cadangan.find((c) => c.penyedia === "gemini")!;
   const o = cadangan.find((c) => c.penyedia === "openrouter")!;
+  const q = cadangan.find((c) => c.penyedia === "groq")!;
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
@@ -84,6 +95,17 @@ export default function CadanganPanel({
             Batas gratis OpenRouter sekitar 50 permintaan/hari. Sebagian model gratis mewajibkan izin &quot;model training&quot; di pengaturan privasi OpenRouter, artinya data bisa dipakai penyedia modelnya.
           </p>
         </div>
+
+        <div id="groq" className="card card-pad scroll-mt-20">
+          <Judul c={q} />
+          <p className="mb-3 text-sm text-muted">
+            Inferensi sangat cepat (jawaban dalam ±1–2 detik) lewat API resmi Groq, ada paket gratis dengan batas per model. Buat API key di <span className="font-medium">console.groq.com</span> → API Keys, lalu tempel di bawah.
+          </p>
+          <Kunci c={q} placeholder="gsk_…" />
+          <p className="mt-3 text-xs text-muted">
+            Batas gratis Groq (permintaan per menit / per hari) berlaku per model; kalau kena batas, bot pindah ke model Groq lain. Groq tidak dipakai untuk membaca gambar. Cek kebijakan data Groq untuk paket gratis sebelum memakainya.
+          </p>
+        </div>
       </div>
 
       <div className="card card-pad">
@@ -92,14 +114,16 @@ export default function CadanganPanel({
           Urutan & model
         </h3>
         <ActionForm action={simpanCadanganAction} submit="Simpan" submitClass="btn-secondary">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Saklar nama="ai_claude_aktif" label="Claude (utama)" on={claudeAktif} />
             <Saklar nama="ai_gemini_aktif" label="Gemini (cadangan)" on={g.aktif} />
             <Saklar nama="ai_openrouter_aktif" label="OpenRouter (cadangan)" on={o.aktif} />
+            <Saklar nama="ai_groq_aktif" label="Groq (cadangan)" on={q.aktif} />
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Saklar nama="ai_gemini_auto" label="Gemini: pindah model otomatis kalau penuh" on={autoGemini} />
             <Saklar nama="ai_openrouter_auto" label="OpenRouter: pindah model otomatis kalau penuh" on={autoOpenRouter} />
+            <Saklar nama="ai_groq_auto" label="Groq: pindah model otomatis kalau penuh" on={autoGroq} />
           </div>
           <p className="hint">Model yang kamu pilih dicoba duluan. Kalau penuh, timeout, atau ditutup, bot pindah ke model lain yang terbukti paling cepat menjawab (maks. 4 percobaan, 30 detik per model). Model yang baru gagal ditahan beberapa menit lalu dicoba lagi sendiri.</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -107,9 +131,30 @@ export default function CadanganPanel({
               <label htmlFor="ai_urutan_cadangan" className="label">
                 Setelah Claude, coba
               </label>
-              <select id="ai_urutan_cadangan" name="ai_urutan_cadangan" defaultValue={urutan} className="input">
-                <option value="gemini,openrouter">Gemini → OpenRouter</option>
-                <option value="openrouter,gemini">OpenRouter → Gemini</option>
+              <select id="ai_urutan_cadangan" name="ai_urutan_cadangan" defaultValue={urutan.split(",")[0]} className="input">
+                <option value="gemini">Gemini → OpenRouter → Groq</option>
+                <option value="groq">Groq → Gemini → OpenRouter</option>
+                <option value="openrouter">OpenRouter → Gemini → Groq</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="ai_groq_model" className="label">
+                Model Groq
+              </label>
+              <select id="ai_groq_model" name="ai_groq_model" defaultValue={modelGroq} className="input">
+                {[...new Set([modelGroq, ...MODEL_GROQ, ...(groqDitemukan ?? [])])].map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="ai_groq_model_ringan" className="label">
+                Groq tugas kecil
+              </label>
+              <select id="ai_groq_model_ringan" name="ai_groq_model_ringan" defaultValue={modelGroqRingan} className="input">
+                {[...new Set([modelGroqRingan, ...MODEL_GROQ, ...(groqDitemukan ?? [])])].map((m) => (
+                  <option key={m}>{m}</option>
+                ))}
               </select>
             </div>
             <div>
@@ -181,7 +226,7 @@ export default function CadanganPanel({
                     <tr key={`${m.penyedia}|${m.model}`} className="border-t border-line">
                       <td className="py-1.5 pr-3">
                         <span className="flex items-center gap-1.5">
-                          <LogoPenyedia penyedia={m.penyedia === "gemini" ? "gemini" : "openrouter"} size={14} />
+                          <LogoPenyedia penyedia={m.penyedia === "gemini" ? "gemini" : m.penyedia === "groq" ? "groq" : "openrouter"} size={14} />
                           <span className="break-all">{m.model}</span>
                         </span>
                       </td>

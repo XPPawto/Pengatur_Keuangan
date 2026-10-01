@@ -433,16 +433,16 @@ async function keAsisten(db: Db, nomor: string, text: string, parsed: ParsedMess
   return { ya: false, catatan: st.kondisi === "dimatikan" ? undefined : pesanAIMati(st.kondisi === "belum_dicek" || st.kondisi === "ok" ? "gagal" : st.kondisi, st.tahanSampai) };
 }
 
-const KODE_PENYEDIA = { gemini: "gm", openrouter: "or" } as const;
+const KODE_PENYEDIA = { gemini: "gm", openrouter: "or", groq: "gq" } as const;
 
 /** `penyedia` terisi kalau pesan diawali `or` (OpenRouter) / `gm` (Gemini): hanya penyedia itu, tanpa pindah ke cadangan. */
-async function cmdTanya(db: Db, nomor: string, pertanyaan: string, now: Date, penyedia?: "gemini" | "openrouter"): Promise<string[]> {
+async function cmdTanya(db: Db, nomor: string, pertanyaan: string, now: Date, penyedia?: "gemini" | "openrouter" | "groq"): Promise<string[]> {
   if (!pertanyaan) {
     if (penyedia) {
       const k = KODE_PENYEDIA[penyedia];
       return [`Tulis pertanyaannya setelah \`${k}\` (dijawab ${LABEL_PENYEDIA[penyedia]}). Contoh: \`${k} boleh beli sepatu 150rb?\``];
     }
-    return ["Tanya apa aja soal duit lo. Contoh:\n• `tanya boleh beli sepatu 150rb?`\n• `tanya berapa jajan gw bulan ini?`\n• `tanya rencanain makan seminggu 140rb`\n\nPilih model tertentu: `or <pesan>` (OpenRouter) atau `gm <pesan>` (Gemini). Tanpa kode, Claude dulu, cadangan kalau Claude nggak bisa."];
+    return ["Tanya apa aja soal duit lo. Contoh:\n• `tanya boleh beli sepatu 150rb?`\n• `tanya berapa jajan gw bulan ini?`\n• `tanya rencanain makan seminggu 140rb`\n\nPilih model tertentu: `or <pesan>` (OpenRouter), `gm <pesan>` (Gemini), atau `gq <pesan>` (Groq). Tanpa kode, Claude dulu, cadangan kalau Claude nggak bisa."];
   }
   const r = await tanyaAsisten(db, { kanal: nomor, pesan: pertanyaan, now, penyedia });
   if (r.ok) return balasAsisten(db, nomor, r, now, !!penyedia);
@@ -459,7 +459,7 @@ async function cmdTanya(db: Db, nomor: string, pertanyaan: string, now: Date, pe
 async function balasAsisten(db: Db, nomor: string, r: Awaited<ReturnType<typeof tanyaAsisten>>, now: Date, dipilih = false): Promise<string[]> {
   const baris = [r.balasan];
   if (r.memori.length) baris.push("", ...r.memori.map((m) => `(${m})`));
-  const nama = r.penyedia === "gemini" ? "Gemini" : r.penyedia === "openrouter" ? "OpenRouter" : "Claude";
+  const nama = r.penyedia === "gemini" ? "Gemini" : r.penyedia === "openrouter" ? "OpenRouter" : r.penyedia === "groq" ? "Groq" : "Claude";
   if (dipilih) baris.push("", `_(dijawab lewat ${nama}${r.model ? ` · ${r.model}` : ""})_`);
   else if (r.penyedia && r.penyedia !== "claude") baris.push("", `_(dijawab lewat ${nama} karena Claude lagi nggak bisa dipakai)_`);
   if (r.aksi.length) {

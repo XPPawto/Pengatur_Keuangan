@@ -7,7 +7,7 @@ import { getSetting, getSettingNumber, setSetting } from "../services/settings";
 import { ownerNumbers } from "../whitelist";
 import type { IncomingWaMessage } from "../whatsapp/gateway";
 import { AI_WORK_DIR } from "./claude";
-import { batasClaude, getTokenAI, kunciCadangan, LABEL_PENYEDIA, panggilAI, type Penyedia } from "./panggil";
+import { batasClaude, CADANGAN, getTokenAI, kunciCadangan, LABEL_PENYEDIA, panggilAI, type Penyedia } from "./panggil";
 
 /**
  * AI grup WhatsApp: bot yang sama jadi asisten AI umum untuk SATU grup.
@@ -24,24 +24,29 @@ const KODE_PERINTAH = /^!aigrup\b\s*(.*)$/i;
 /** Awalan untuk memanggil AI di grup: `/ai apa itu fotosintesis?` */
 const AWALAN_AI = /^\/ai\b[\s:,]*([\s\S]*)$/i;
 const MODE_GRUP = ["perintah", "pertanyaan", "semua"] as const;
-const RODA: readonly Penyedia[] = ["claude", "gemini", "openrouter"];
+const RODA: readonly Penyedia[] = ["claude", "gemini", "openrouter", "groq"];
 
 export const SYSTEM_GRUP = [
-  "Kamu *asisten AI* di sebuah grup WhatsApp, seperti Meta AI tapi lebih hangat dan lebih membantu. Anggota grup memanggilmu dengan awalan /ai.",
+  "Kamu *Fable 5*, asisten AI di sebuah grup WhatsApp. Anggota grup memanggilmu dengan awalan /ai. Jadilah asisten terbaik yang pernah mereka pakai: cerdas, tepat, hangat, dan terasa premium, seperti konsultan ahli yang ramah.",
   "",
   "Yang bisa kamu lakukan: menjawab pertanyaan apa pun, menjelaskan konsep dengan contoh, menerjemahkan, meringkas atau memperbaiki teks (termasuk pesan yang dibalas), menulis (caption, pesan, email, puisi), brainstorming ide, hitung-hitungan, bantu kode, kasih saran praktis, dan membaca gambar/foto yang dikirim.",
   "",
+  "Kualitas jawaban:",
+  "- Langsung ke inti. Jangan membuka dengan sapaan basa-basi atau mengulang pertanyaan, dan jangan menutup dengan \"ada yang bisa kubantu lagi?\". Satu saran lanjutan atau pertanyaan pemantik di akhir hanya kalau benar-benar berguna.",
+  "- Substantif dan spesifik: beri alasan di balik jawaban, contoh konkret, angka, atau analogi yang pas. Hindari kalimat umum yang bisa ditempel di jawaban apa pun.",
+  "- Sesuaikan panjang dengan soalnya: obrolan ringan 1–3 kalimat; penjelasan, kuliah, atau koding terstruktur (judul tebal singkat, poin, langkah) sekitar 80–220 kata kecuali diminta rinci.",
+  "- Kalau ada beberapa kemungkinan, sebutkan mana yang paling mungkin dan kenapa. Kalau soalnya ambigu, tanya satu pertanyaan singkat. Kalau premis penanya keliru, koreksi dengan sopan.",
+  "",
   "Gaya:",
-  "- Hangat, ramah, langsung ke inti. Emoji secukupnya, jangan berlebihan.",
+  "- Hangat dan percaya diri. Emoji secukupnya (paling banyak satu atau dua).",
   "- Pakai bahasa yang sama dengan penanya (bawaan: Bahasa Indonesia santai tapi sopan; bisa juga Inggris, Jawa, dll.).",
-  "- Singkat: sekitar 2–6 kalimat kecuali diminta rinci. Format WhatsApp saja: *tebal*, daftar dengan \"• \". Jangan pakai tabel, heading markdown, atau blok kode panjang.",
-  "- Kalau pertanyaannya kurang jelas, tanya balik satu pertanyaan singkat.",
+  "- Format WhatsApp saja: *tebal*, daftar dengan \"• \". Jangan pakai tabel, heading markdown, atau blok kode panjang.",
   "- Anggota grup bisa banyak; nama penanya ada di awal pesan. Jawab untuk penanya itu.",
   "",
-  "Identitas: namamu *Fable 5*, asisten AI grup ini. Kalau ada yang bertanya kamu AI apa / model apa / siapa kamu, jawab bahwa kamu Fable 5, asisten AI grup ini (singkat dan ramah). Jangan pernah mengaku manusia. Kalau ditanya lebih dalam soal teknologi atau perusahaan di balik dirimu, jangan mengarang: katakan jujur bahwa jawabanmu dikerjakan bergiliran oleh beberapa penyedia AI, dan nama penyedia serta model yang menjawab tertera di bagian bawah jawaban (kalau tidak tertera, kamu tidak punya detailnya).",
+  "Identitas: namamu *Fable 5*, asisten AI grup ini. Kalau ada yang bertanya kamu siapa / AI apa / model apa / kenapa kamu pintar, jawab singkat (1–2 kalimat) dan percaya diri bahwa kamu Fable 5, asisten AI grup ini, lalu tawarkan apa yang bisa kamu bantu. Jangan pernah mengaku manusia. JANGAN menceritakan cara kerja internalmu (penyedia, giliran, penggabungan, draf, cara pelatihan). Kalau ditanya langsung soal teknologi atau perusahaan di balik dirimu, katakan ringkas bahwa kamu tidak punya detail teknis tentang itu; jangan menyebut nama perusahaan atau model dan jangan mengarang.",
   "",
   "Kejujuran:",
-  "- Kamu TIDAK bisa membuka internet atau info real-time (berita, cuaca, skor, harga, kurs) dan TIDAK bisa membuat gambar. Kalau diminta, katakan terus terang lalu bantu sebisanya (mis. jelaskan caranya, atau jawab dari pengetahuan umum sambil bilang bisa sudah usang).",
+  "- Kamu TIDAK bisa membuka internet atau info real-time (berita, cuaca, skor, harga, kurs) dan TIDAK bisa membuat gambar. Sebutkan batas ini HANYA kalau permintaannya memang membutuhkan itu; jangan menyelipkannya di jawaban lain. Lalu bantu sebisanya (mis. jelaskan caranya, atau jawab dari pengetahuan umum sambil bilang bisa sudah usang).",
   "- Jangan mengarang fakta, angka, kutipan, atau tautan. Kalau tidak yakin, katakan.",
   "- Kamu tidak punya akses ke data pribadi siapa pun atau riwayat chat selain potongan percakapan yang diberikan.",
   "",
@@ -74,11 +79,12 @@ export function pertanyaanIdentitas(teks: string): boolean {
 /** Tambahan instruksi untuk tahap penggabungan jawaban dari beberapa penyedia. */
 export const SYSTEM_EDITOR = [
   "",
-  "PERAN SEKARANG: editor jawaban. Di bawah ada beberapa draf jawaban (dari asisten AI berbeda) untuk pesan baru dari penanya. Tugasmu menulis SATU jawaban final terbaik.",
+  "PERAN SEKARANG: editor jawaban. Di bawah ada beberapa draf jawaban (dari asisten AI berbeda) untuk pesan baru dari penanya. Tugasmu menulis SATU jawaban final terbaik, selevel jawaban asisten AI premium.",
   "- Ambil isi yang paling benar, jelas, dan berguna dari semua draf; gabungkan yang saling melengkapi; buang pengulangan.",
+  "- Buang basa-basi, sapaan pembuka, penutup generik, dan peringatan berulang. Pertahankan peringatan (mis. tanpa info real-time) hanya kalau pertanyaannya memang membutuhkannya.",
   "- Kalau draf saling bertentangan soal fakta, pilih yang paling bisa dipertanggungjawabkan; kalau tidak bisa dipastikan, katakan tidak yakin. Jangan menambah fakta, angka, atau tautan baru yang tidak ada di draf.",
-  "- Ikuti semua aturan gaya dan kejujuran di atas (bahasa penanya, ringkas, format WhatsApp).",
-  "- Jangan menyebut \"draf\", \"jawaban A/B/C\", atau bahwa ada beberapa asisten. Tulis langsung jawabannya.",
+  "- Ikuti semua aturan kualitas, gaya, identitas, dan kejujuran di atas (bahasa penanya, padat, format WhatsApp, tidak menceritakan cara kerja internal).",
+  "- Jangan menyebut \"draf\", \"jawaban A/B/C\", penyedia, atau bahwa ada beberapa asisten. Tulis langsung jawabannya.",
 ].join("\n");
 
 const BANTUAN_RE = /^(bantuan|help|menu|fitur|\?)$/i;
@@ -128,9 +134,13 @@ export function adalahPertanyaan(teks: string): boolean {
   return t.includes("?") || KATA_TANYA.test(t);
 }
 
-/** Rapikan jawaban model untuk WhatsApp: **tebal** → *tebal*, buang heading markdown, batasi panjang. */
+/** Kalimat yang membocorkan cara kerja internal (penyedia, giliran, detail model) dibuang, apa pun yang dikatakan model. */
+const RE_BOCOR = [/[^.!?\n]*\bbergiliran\b[^.!?\n]*\bpenyedia\b[^.!?\n]*[.!?]*/gi, /[^.!?\n]*\bpenyedia\b[^.!?\n]*\bbergiliran\b[^.!?\n]*[.!?]*/gi, /[^.!?\n]*tanpa detail (?:model )?spesifik[^.!?\n]*[.!?]*/gi];
+
+/** Rapikan jawaban model untuk WhatsApp: **tebal** → *tebal*, buang heading markdown, buang bocoran internal, batasi panjang. */
 export function bersihkanBalasan(teks: string, maks = 3000): string {
-  const t = teks
+  const t = RE_BOCOR.reduce((x, re) => x.replace(re, ""), teks)
+    .replace(/[ \t]+\n/g, "\n")
     .replace(/\*\*(.+?)\*\*/gs, "*$1*")
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/\n{3,}/g, "\n\n")
@@ -184,7 +194,7 @@ export async function penyediaTersedia(db: Db): Promise<Penyedia[]> {
   const out: Penyedia[] = [];
   const t = await getTokenAI(db);
   if (t.token || t.sumber === "folder") out.push("claude");
-  for (const p of ["gemini", "openrouter"] as const) {
+  for (const p of CADANGAN) {
     const k = await kunciCadangan(db, p);
     if (k.kunci || k.sumber === "login") out.push(p);
   }
@@ -295,7 +305,7 @@ interface Draf {
   teks: string;
 }
 
-const URUT_UTAMA: readonly Penyedia[] = ["claude", "gemini", "openrouter"];
+const URUT_UTAMA: readonly Penyedia[] = ["claude", "gemini", "openrouter", "groq"];
 /**
  * Waktu tunggu penyedia lain setelah draf pertama masuk. Claude CLI biasanya 10–15 dtk (Opus bisa 40+ dtk) sedangkan Gemini ±1–2 dtk,
  * jadi tenggang harus cukup panjang supaya jawaban Claude ikut tergabung; soal berat menunggu lebih lama.
@@ -349,7 +359,8 @@ async function urutanPenggabung(db: Db, tersedia: readonly Penyedia[], tingkat: 
   const ada = (p: Penyedia) => tersedia.includes(p);
   const tinggi = (await batasClaude(db, now)).some((j) => (j.kode === "five_hour" ? j.persen >= 70 : j.persen >= 85));
   const claudeDulu = tingkat === "sangat_berat" && !tinggi;
-  const urut: Penyedia[] = claudeDulu ? ["claude", "gemini", "openrouter"] : ["gemini", "openrouter", "claude"];
+  // Gemini dan Groq cepat; Groq jadi cadangan penggabung berikutnya
+  const urut: Penyedia[] = claudeDulu ? ["claude", "gemini", "groq", "openrouter"] : ["gemini", "groq", "openrouter", "claude"];
   return urut.filter(ada);
 }
 
@@ -454,7 +465,8 @@ export async function prosesPesanGrup(db: Db, m: IncomingWaMessage, now: Date, o
     // OpenRouter dengan model terpasang bisa jadi tidak mendukung gambar (dan gagalnya bisa menahan model itu untuk teks);
     // dalam mode otomatis (tanpa model terpasang) model yang dipilih sudah disaring yang bisa membaca gambar.
     const orTerpasang = !!(await getSetting(db, "ai_openrouter_model"));
-    tersedia = tersedia.filter((p) => p !== "openrouter" || !orTerpasang);
+    // Groq tidak dipakai untuk gambar
+    tersedia = tersedia.filter((p) => p !== "groq" && (p !== "openrouter" || !orTerpasang));
     if (!tersedia.length) {
       bersihFoto();
       return "Belum ada penyedia yang bisa membaca foto (butuh Claude atau Gemini).";

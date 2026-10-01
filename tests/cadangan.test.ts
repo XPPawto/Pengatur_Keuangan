@@ -9,8 +9,9 @@ import { tanyaAsisten } from "@/lib/ai/asisten";
 import { fromWib } from "@/lib/time";
 import type { HasilClaude } from "@/lib/ai/claude";
 import { aturDaftarGemini, daftarModelGemini, daftarModelGeminiCache, golongkanGemini, penjalanGeminiApi, penjalanGeminiCli } from "@/lib/ai/gemini";
+import { aturDaftarGroq, daftarModelGroq, daftarModelGroqCache, golongkanGroq, penjalanGroq } from "@/lib/ai/groq";
 import { aturDaftarModel, golongkanOpenRouter, masalahModel, penjalanOpenRouter } from "@/lib/ai/openrouter";
-import { bacaStatistik, calonGemini, catatModel, tahanSementaraMs, urutkanModel, type StatModel } from "@/lib/ai/modelOtomatis";
+import { bacaStatistik, calonGemini, calonGroq, catatModel, jenisGagal, tahanSementaraMs, urutkanModel, type StatModel } from "@/lib/ai/modelOtomatis";
 import { panggilAI, pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI, statusAI, statusCadangan, tesKoneksiAI, urutanPenyedia } from "@/lib/ai/panggil";
 import { setSetting } from "@/lib/services/settings";
 import { resetDb } from "./helpers";
@@ -26,17 +27,20 @@ const tanya = (now: Date) => panggilAI(db, { fitur: "chat_web", system: "s", pro
 const GEMINI_DITEMUKAN = ["gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash"];
 let dipanggil: string[] = [];
 let jawab: Record<string, () => HasilClaude>;
+const KUNCI_Q = "gsk_kunci-groq-tes-0123456789abcdef0123456789";
 let pulih: (() => void)[] = [];
 beforeEach(async () => {
   await resetDb(db);
   aturDaftarGemini(GEMINI_DITEMUKAN); // tanpa ini, memuat daftar model dari Google di latar belakang (jaringan sungguhan)
   dipanggil = [];
-  jawab = { claude: () => ok("claude"), gemini: () => ok("gemini"), openrouter: () => ok("openrouter") };
+  jawab = { claude: () => ok("claude"), gemini: () => ok("gemini"), openrouter: () => ok("openrouter"), groq: () => ok("groq") };
+  aturDaftarGroq(["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"]); // tanpa pemuatan jaringan di latar belakang
   pulih = [
     setPenjalanAI(async () => (dipanggil.push("claude"), jawab.claude())),
     setPenjalanCadangan({
       gemini: async (p) => (dipanggil.push(`gemini:${p.model}:${p.apiKey}`), jawab.gemini()),
       openrouter: async (p) => (dipanggil.push(`openrouter:${p.model}`), jawab.openrouter()),
+      groq: async (p) => (dipanggil.push(`groq:${p.model}`), jawab.groq()),
     }),
   ];
 });
@@ -44,6 +48,7 @@ afterEach(() => {
   pulih.forEach((f) => f());
   aturDaftarModel(null);
   aturDaftarGemini(null);
+  aturDaftarGroq(null);
 });
 afterAll(() => db.$disconnect());
 
@@ -110,6 +115,7 @@ describe("cadangan otomatis", () => {
     expect(st.cadangan.map((c) => [c.penyedia, c.siap, c.samaran])).toEqual([
       ["gemini", true, "••••6789"],
       ["openrouter", true, "••••6789"],
+      ["groq", false, null], // belum disambungkan
     ]);
   });
 
@@ -746,5 +752,172 @@ describe("OpenRouter: header 200 cepat, badan jawaban lambat / kosong", () => {
     await panggilAI(db, { fitur: "chat_grup", system: "s", prompt: "p", now: at("2026-10-05", 12, 1), penyedia: "openrouter" });
     expect(dipanggil).toHaveLength(1);
     expect(dipanggil[0]).not.toBe("openrouter:meta-llama/llama-3.3-70b-instruct:free");
+  });
+});
+
+describe("Groq: penyedia keempat", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const GQ = { system: "s", prompt: "p", model: "llama-3.3-70b-versatile", apiKey: KUNCI_Q };
+  const balas = (status: number, body: unknown) => vi.fn(async (_u: string, _i?: RequestInit) => new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
+
+  it("jawaban sukses: endpoint & header resmi, max_completion_tokens, key tidak di URL", async () => {
+    const f = balas(200, { choices: [{ message: { content: "Halo dari Groq" }, finish_reason: "stop" }], usage: { prompt_tokens: 12, completion_tokens: 5 } });
+    vi.stubGlobal("fetch", f);
+    const h = await penjalanGroq(GQ);
+    expect(h).toMatchObject({ ok: true, teks: "Halo dari Groq", token: { masuk: 12, keluar: 5 } });
+    expect(f.mock.calls[0][0]).toBe("https://api.groq.com/openai/v1/chat/completions");
+    expect(f.mock.calls[0][0]).not.toContain(KUNCI_Q);
+    const init = f.mock.calls[0][1]!;
+    expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${KUNCI_Q}`);
+    const body = JSON.parse(init.body as string);
+    expect(body).toMatchObject({ model: "llama-3.3-70b-versatile", max_completion_tokens: 2000 });
+    expect(body.messages.map((m: { role: string }) => m.role)).toEqual(["system", "user"]);
+  });
+
+  it("gambar & nama model aneh ditolak sebelum ada permintaan jaringan", async () => {
+    const f = balas(200, {});
+    vi.stubGlobal("fetch", f);
+    expect(await penjalanGroq({ ...GQ, gambar: "/tmp/x.png" })).toMatchObject({ ok: false, alasan: "gagal" });
+    for (const m of ["../../etc", "../x", "a/b/c", "x y", "", "/abs", "-awal"]) expect(await penjalanGroq({ ...GQ, model: m }), m).toMatchObject({ ok: false, alasan: "gagal" });
+    expect(f).not.toHaveBeenCalled();
+    // nama model Groq yang sah tetap diterima (termasuk yang berawalan vendor)
+    vi.stubGlobal("fetch", balas(200, { choices: [{ message: { content: "ok" } }] }));
+    for (const m of ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "meta-llama/llama-4-scout-17b-16e-instruct", "qwen/qwen3-32b"]) expect(await penjalanGroq({ ...GQ, model: m }), m).toMatchObject({ ok: true });
+  });
+
+  it("golongan error: 401 key, 429/413 batas, 5xx sibuk, 404 model hilang", async () => {
+    const galat = (status: number, kode: string, pesan: string) => balas(status, { error: { message: pesan, type: "x", code: kode } });
+    const coba = async (f: ReturnType<typeof balas>) => (vi.stubGlobal("fetch", f), penjalanGroq(GQ));
+    expect(await coba(galat(401, "invalid_api_key", "Invalid API Key"))).toMatchObject({ ok: false, alasan: "belum_login", pesan: "Invalid API Key" });
+    expect(await coba(galat(429, "rate_limit_exceeded", "Rate limit reached for model llama-3.3-70b-versatile"))).toMatchObject({ ok: false, alasan: "limit" });
+    expect(await coba(galat(413, "request_too_large", "Request too large"))).toMatchObject({ ok: false, alasan: "limit" });
+    expect(await coba(galat(503, "service_unavailable", "Service unavailable"))).toMatchObject({ ok: false, alasan: "sibuk" });
+    const hilang = await coba(galat(404, "model_not_found", "The model `llama-9` does not exist or you do not have access to it."));
+    expect(hilang).toMatchObject({ ok: false, alasan: "gagal" });
+    expect(golongkanGroq(401, "")).toBe("belum_login");
+    expect(golongkanGroq(400, "", "invalid_api_key")).toBe("belum_login");
+  });
+
+  it("kegagalan Groq: salah modelnya (limit per model / sibuk / timeout / dihentikan) → model lain; salah key → berhenti", () => {
+    const gagalH = (alasan: Extract<HasilClaude, { ok: false }>["alasan"], pesan: string): HasilClaude => ({ ok: false, alasan, pesan, durasiMs: 3 });
+    expect(jenisGagal("groq", gagalH("limit", "Rate limit reached"))).toBe("sementara");
+    expect(jenisGagal("groq", gagalH("sibuk", "Service unavailable"))).toBe("sementara");
+    expect(jenisGagal("groq", gagalH("timeout", "Groq tidak menjawab tepat waktu"))).toBe("sementara");
+    expect(jenisGagal("groq", gagalH("gagal", "The model `x` has been decommissioned and is no longer supported"))).toBe("rusak");
+    expect(jenisGagal("groq", gagalH("gagal", "The model `llama-9` does not exist"))).toBe("rusak");
+    expect(jenisGagal("groq", gagalH("belum_login", "Invalid API Key"))).toBeNull();
+  });
+
+  it("batas waktu saat membaca badan → timeout; badan terputus → sibuk; 200 tanpa teks → sibuk; spasi di depan badan terbaca", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ start: (c) => c.error(Object.assign(new Error("t"), { name: "TimeoutError" })) }), { status: 200 })));
+    expect(await penjalanGroq(GQ)).toMatchObject({ ok: false, alasan: "timeout" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new ReadableStream({ start: (c) => c.error(new Error("socket hang up")) }), { status: 200 })));
+    expect(await penjalanGroq(GQ)).toMatchObject({ ok: false, alasan: "sibuk" });
+    vi.stubGlobal("fetch", balas(200, { choices: [{ message: { content: null }, finish_reason: "length" }], usage: { prompt_tokens: 5, completion_tokens: 2000 } }));
+    const kosong = await penjalanGroq(GQ);
+    expect(kosong).toMatchObject({ ok: false, alasan: "sibuk" });
+    expect(kosong.ok ? "" : kosong.pesan).toContain("membalas kosong (length)");
+    vi.stubGlobal("fetch", balas(200, `\n  ${JSON.stringify({ choices: [{ message: { content: "ok!" } }] })}`));
+    expect(await penjalanGroq(GQ)).toMatchObject({ ok: true, teks: "ok!" });
+  });
+
+  it("penemuan model: hanya model percakapan yang aktif, konteks terbesar dulu, key di header, di-cache", async () => {
+    aturDaftarGroq(null);
+    const f = balas(200, {
+      data: [
+        { id: "llama-3.1-8b-instant", active: true, context_window: 131072 },
+        { id: "whisper-large-v3", active: true, context_window: 448 },
+        { id: "playai-tts", active: true, context_window: 8192 },
+        { id: "meta-llama/llama-prompt-guard-2-86m", active: true, context_window: 512 },
+        { id: "openai/gpt-oss-120b", active: true, context_window: 262144 },
+        { id: "model-lama", active: false, context_window: 999999 },
+        { id: "llama-3.3-70b-versatile", active: true, context_window: 131072 },
+      ],
+    });
+    vi.stubGlobal("fetch", f);
+    expect(await daftarModelGroq(KUNCI_Q)).toEqual(["openai/gpt-oss-120b", "llama-3.1-8b-instant", "llama-3.3-70b-versatile"]);
+    expect((f.mock.calls[0][1]!.headers as Record<string, string>).Authorization).toBe(`Bearer ${KUNCI_Q}`);
+    await daftarModelGroq(KUNCI_Q);
+    expect(f).toHaveBeenCalledTimes(1); // dari cache
+    expect(daftarModelGroqCache()).toHaveLength(3);
+    aturDaftarGroq(null);
+    vi.stubGlobal("fetch", balas(401, { error: { message: "Invalid API Key" } }));
+    await expect(daftarModelGroq(KUNCI_Q)).rejects.toThrow("Groq 401");
+  });
+
+  it("calonGroq: daftar tetap tanpa penemuan; dengan penemuan: teruji yang masih aktif dulu, lalu model baru", () => {
+    expect(calonGroq(false, "x", null)).toEqual(["x", "llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"]);
+    expect(calonGroq(true, "x", null).slice(0, 2)).toEqual(["x", "llama-3.1-8b-instant"]);
+    expect(calonGroq(false, "x", ["llama-3.3-70b-versatile", "model-baru-9b"])).toEqual(["x", "llama-3.3-70b-versatile", "model-baru-9b"]); // yang sudah tidak terdaftar dibuang
+  });
+
+  it("key tersimpan terenkripsi; status & ringkasan cadangan memuatnya dengan model bawaan", async () => {
+    await simpanKunciCadangan(db, "groq", KUNCI_Q);
+    const mentah = await db.setting.findUnique({ where: { kunci: "ai_groq_key" } });
+    expect(mentah?.nilai).not.toContain(KUNCI_Q);
+    const st = await statusCadangan(db);
+    expect(st.map((c) => c.penyedia)).toEqual(["gemini", "openrouter", "groq"]);
+    expect(st.find((c) => c.penyedia === "groq")).toMatchObject({ ada: true, aktif: false, label: "Groq", model: "llama-3.3-70b-versatile", samaran: "••••6789" });
+  });
+
+  it("model utama Groq kena batas → model Groq berikutnya menjawab; tersimpan di statistik dan dilewati sesudahnya", async () => {
+    await simpanKunciCadangan(db, "groq", KUNCI_Q);
+    let n = 0;
+    jawab.groq = () => (n++ === 0 ? { ok: false, alasan: "limit", pesan: "Rate limit reached for model llama-3.3-70b-versatile", durasiMs: 3 } : ok("dari model lain"));
+    const t = at("2026-10-05");
+    const h = await panggilAI(db, { fitur: "chat_grup", system: "s", prompt: "p", now: t, penyedia: "groq" });
+    expect(h).toMatchObject({ ok: true, penyedia: "groq", teks: "dari model lain" });
+    expect(dipanggil[0]).toBe("groq:llama-3.3-70b-versatile"); // pilihan dulu
+    expect(h.model).not.toBe("llama-3.3-70b-versatile");
+    dipanggil = [];
+    await panggilAI(db, { fitur: "chat_grup", system: "s", prompt: "p", now: at("2026-10-05", 12, 1), penyedia: "groq" });
+    expect(dipanggil).toHaveLength(1);
+    expect(dipanggil[0]).not.toBe("groq:llama-3.3-70b-versatile"); // masih ditahan
+  });
+
+  it("saklar otomatis mati: satu model saja; model eksplisit tidak diganti; nama model tidak valid ditolak", async () => {
+    await simpanKunciCadangan(db, "groq", KUNCI_Q);
+    jawab.groq = () => ({ ok: false, alasan: "limit", pesan: "Rate limit", durasiMs: 3 });
+    await setSetting(db, "ai_groq_auto", "0");
+    await panggilAI(db, { fitur: "chat_grup", system: "s", prompt: "p", now: at("2026-10-05"), penyedia: "groq" });
+    expect(dipanggil).toEqual(["groq:llama-3.3-70b-versatile"]);
+    dipanggil = [];
+    await setSetting(db, "ai_groq_auto", "1");
+    // panggilan eksplisit dari aplikasi memakai `paksa` (abaikan masa tahan setelah kena batas di panggilan sebelumnya)
+    await panggilAI(db, { fitur: "chat_grup", system: "s", prompt: "p", now: at("2026-10-05", 12, 1), penyedia: "groq", model: "openai/gpt-oss-20b", paksa: true });
+    expect(dipanggil).toEqual(["groq:openai/gpt-oss-20b"]);
+    dipanggil = [];
+    expect(await panggilAI(db, { fitur: "chat_grup", system: "s", prompt: "p", now: at("2026-10-05"), penyedia: "groq", model: "../x" })).toMatchObject({ ok: false });
+    expect(dipanggil).toEqual([]);
+  });
+
+  it("urutan cadangan: Groq ikut di belakang secara bawaan, bisa dijadikan yang pertama; permintaan berfoto melewatinya", async () => {
+    await simpanKunciCadangan(db, "gemini", KUNCI_G);
+    await simpanKunciCadangan(db, "groq", KUNCI_Q);
+    await setSetting(db, "ai_gemini_aktif", "1");
+    await setSetting(db, "ai_groq_aktif", "1");
+    await setSetting(db, "ai_claude_aktif", "0");
+    expect(await urutanPenyedia(db)).toEqual(["gemini", "groq"]);
+    await setSetting(db, "ai_urutan_cadangan", "groq,gemini,openrouter");
+    expect(await urutanPenyedia(db)).toEqual(["groq", "gemini"]);
+    // foto: Groq dilewati, jatuh ke Gemini
+    const h = await panggilAI(db, { fitur: "struk", system: "s", prompt: "p", now: at("2026-10-05"), gambar: "/tmp/foto.png" });
+    expect(h).toMatchObject({ ok: true, penyedia: "gemini" });
+    expect(dipanggil.some((x) => x.startsWith("groq:"))).toBe(false);
+  });
+
+  it("WhatsApp `gq <pesan>`: hanya Groq, ditandai Groq + model; tanpa key diberi tahu", async () => {
+    expect(parseMessage("gq apa itu inflasi?")).toEqual({ type: "tanya", pertanyaan: "apa itu inflasi?", penyedia: "groq" });
+    expect(parseMessage("Groq: halo")).toEqual({ type: "tanya", pertanyaan: "halo", penyedia: "groq" });
+    await handleMessage(db, { nomor: "085163544535", text: "masuk 300", now: at("2026-10-04", 10) });
+    await handleMessage(db, { nomor: "085163544535", text: "ok", now: at("2026-10-04", 10) });
+    const [tanpa] = await handleMessage(db, { nomor: "085163544535", text: "gq halo", now: at("2026-10-05") });
+    expect(tanpa).toContain("Groq nggak bisa dipakai");
+    await simpanKunciCadangan(db, "groq", KUNCI_Q);
+    jawab.groq = () => ok(JSON.stringify({ balasan: "Inflasi itu kenaikan harga umum.", aksi: [], memori: [] }));
+    const [r] = await handleMessage(db, { nomor: "085163544535", text: "gq apa itu inflasi?", now: at("2026-10-05", 12, 5) });
+    expect(r).toContain("Inflasi itu kenaikan harga umum.");
+    expect(r).toContain("dijawab lewat Groq · llama-3.3-70b-versatile");
+    expect(dipanggil.every((x) => x.startsWith("groq:"))).toBe(true);
   });
 });

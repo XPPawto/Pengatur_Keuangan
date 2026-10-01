@@ -6,6 +6,7 @@ import { Alert, Badge, Card, PageHeader, Stat } from "@/components/ui";
 import { prisma } from "@/lib/db";
 import { kunciCadangan, LABEL_FITUR, LABEL_KONDISI, statusAI } from "@/lib/ai/panggil";
 import { daftarModelGeminiCache, segarkanDaftarGemini } from "@/lib/ai/gemini";
+import { daftarModelGroqCache, segarkanDaftarGroq } from "@/lib/ai/groq";
 import { bacaStatistik } from "@/lib/ai/modelOtomatis";
 import type { BarisStatModel } from "@/lib/ai/model";
 import { dataKoneksi, ringkasanPemakaian } from "@/lib/services/koneksi";
@@ -77,6 +78,10 @@ export default async function KoneksiPage() {
   const keyGemini = (await kunciCadangan(prisma, "gemini")).kunci;
   const geminiDitemukan = daftarModelGeminiCache();
   if (!geminiDitemukan && keyGemini) segarkanDaftarGemini(keyGemini);
+  // daftar model Groq: sama, dari cache + dimuat di latar belakang
+  const keyGroq = (await kunciCadangan(prisma, "groq")).kunci;
+  const groqDitemukan = daftarModelGroqCache();
+  if (!groqDitemukan && keyGroq) segarkanDaftarGroq(keyGroq);
 
   const waOk = peta.wa.status === "terhubung" && peta.wa.botHidup;
 
@@ -133,6 +138,10 @@ export default async function KoneksiPage() {
           modelGratis={modelGratis}
           autoGemini={setel.ai_gemini_auto !== "0"}
           autoOpenRouter={setel.ai_openrouter_auto !== "0"}
+          autoGroq={setel.ai_groq_auto !== "0"}
+          modelGroq={setel.ai_groq_model}
+          modelGroqRingan={setel.ai_groq_model_ringan}
+          groqDitemukan={groqDitemukan}
           statModel={statModel}
           geminiDitemukan={geminiDitemukan}
         />

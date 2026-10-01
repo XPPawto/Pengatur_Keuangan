@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HasilClaude } from "@/lib/ai/claude";
 import { aturDaftarGemini } from "@/lib/ai/gemini";
+import { aturDaftarGroq } from "@/lib/ai/groq";
 import { adalahPertanyaan, BANTUAN, bersihkanBalasan, IDENTITAS, jawabanGrupHariIni, pertanyaanIdentitas, prosesPesanGrup, resetKeadaanGrup, SYSTEM_EDITOR, SYSTEM_GRUP, tingkatSoal, urutanGiliran } from "@/lib/ai/grup";
 import { aturDaftarModel } from "@/lib/ai/openrouter";
 import { pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI } from "@/lib/ai/panggil";
@@ -32,7 +33,7 @@ let jalurGambar: (string | null)[] = [];
 let gambarAda: (boolean | null)[] = [];
 /** model yang diterima tiap penyedia: "claude:haiku", "gemini:gemini-3.6-flash", … */
 let modelDipakai: string[] = [];
-let jawab: Record<"claude" | "gemini" | "openrouter", (prompt: string) => HasilClaude>;
+let jawab: Record<"claude" | "gemini" | "openrouter" | "groq", (prompt: string) => HasilClaude>;
 /** penundaan buatan per penyedia (ms), untuk menguji penyedia yang lambat */
 let tunda: Record<string, number> = {};
 const tahan = (k: string) => (tunda[k] ? new Promise((r) => setTimeout(r, tunda[k])) : null);
@@ -50,26 +51,30 @@ beforeEach(async () => {
   gambarAda = [];
   modelDipakai = [];
   tunda = {};
-  jawab = { claude: () => ok("jawaban claude"), gemini: () => ok("jawaban gemini"), openrouter: () => ok("jawaban openrouter") };
+  jawab = { claude: () => ok("jawaban claude"), gemini: () => ok("jawaban gemini"), openrouter: () => ok("jawaban openrouter"), groq: () => ok("jawaban groq") };
+  aturDaftarGroq(["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"]);
   pulih = [
     setPenjalanAI(async (p) => (dipanggil.push("claude"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), modelDipakai.push(`claude:${p.model}`), await tahan("claude"), jawab.claude(p.prompt))),
     setPenjalanCadangan({
       gemini: async (p) => (dipanggil.push("gemini"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), modelDipakai.push(`gemini:${p.model}`), await tahan("gemini"), jawab.gemini(p.prompt)),
+      groq: async (p) => (dipanggil.push("groq"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), modelDipakai.push(`groq:${p.model}`), await tahan("groq"), jawab.groq(p.prompt)),
       openrouter: async (p) => (dipanggil.push("openrouter"), prompts.push(p.prompt), sistem.push(p.system), jalurGambar.push(p.gambar ?? null), gambarAda.push(p.gambar ? fs.existsSync(p.gambar) : null), modelDipakai.push(`openrouter:${p.model}`), await tahan("openrouter"), jawab.openrouter(p.prompt)),
     }),
   ];
 });
 afterEach(() => {
   pulih.forEach((f) => f());
+  aturDaftarGroq(null);
   aturDaftarGemini(null);
   aturDaftarModel(null);
 });
 afterAll(() => db.$disconnect());
 
 /** Sambungkan penyedia & aktifkan grup. `penyedia` = yang tersambung. */
-async function siapkan(penyedia: ("claude" | "gemini" | "openrouter")[] = ["claude", "gemini", "openrouter"], opsi: { mode?: string; strategi?: "gabung" | "giliran" } = {}) {
+async function siapkan(penyedia: ("claude" | "gemini" | "openrouter" | "groq")[] = ["claude", "gemini", "openrouter"], opsi: { mode?: string; strategi?: "gabung" | "giliran" } = {}) {
   if (penyedia.includes("claude")) await simpanTokenAI(db, "token-claude-tes-0123456789");
   if (penyedia.includes("gemini")) await simpanKunciCadangan(db, "gemini", "AIzaSy-kunci-gemini-tes-0123456789");
+  if (penyedia.includes("groq")) await simpanKunciCadangan(db, "groq", "gsk_kunci-groq-tes-0123456789abcdef0123456789");
   if (penyedia.includes("openrouter")) {
     await simpanKunciCadangan(db, "openrouter", "sk-or-v1-kunci-openrouter-tes-0123456789");
     await setSetting(db, "ai_openrouter_model", OR_MODEL);
@@ -528,10 +533,12 @@ describe("identitas: Fable 5", () => {
     expect(dipanggil).toEqual(["claude"]);
   });
 
-  it("instruksi sistem: nama Fable 5, tidak mengaku manusia, jujur kalau ditanya lebih dalam", () => {
+  it("instruksi sistem: nama Fable 5, tidak mengaku manusia, tidak membocorkan cara kerja, tidak mengarang", () => {
     expect(SYSTEM_GRUP).toContain("*Fable 5*");
     expect(SYSTEM_GRUP).toContain("Jangan pernah mengaku manusia");
-    expect(SYSTEM_GRUP).toMatch(/jangan mengarang.*bergiliran oleh beberapa penyedia AI/s);
+    expect(SYSTEM_GRUP).toContain("JANGAN menceritakan cara kerja internalmu");
+    expect(SYSTEM_GRUP).not.toMatch(/bergiliran oleh beberapa penyedia/i); // tidak ada lagi kalimat yang bisa dibocorkan
+    expect(SYSTEM_GRUP).toContain("tidak punya detail teknis");
   });
 
   it("mengirim foto dengan 'ai apa?' bukan pertanyaan identitas (itu tentang fotonya)", async () => {
@@ -737,5 +744,100 @@ describe("jawaban gabungan: semua penyedia sekaligus, disatukan jadi yang terbai
     k = await dataKoneksi(db, at(12, 2));
     expect(k.grup.strategi).toBe("giliran");
     expect(k.grup.berikut).not.toBeNull();
+  });
+});
+
+describe("kualitas jawaban: premium & tanpa bocoran cara kerja internal", () => {
+  it("bersihkanBalasan membuang kalimat tentang penyedia yang bergiliran / tanpa detail model", () => {
+    const bocor = 'Halo Paw! 👋 Aku belajar dari banyak teks.\n\nTapi ingat ya, aku tidak punya akses internet atau info real-time, dan jawabanku dikerjakan bergiliran oleh beberapa penyedia AI tanpa detail model spesifik. Mau coba tanyain sesuatu?';
+    const bersih = bersihkanBalasan(bocor);
+    expect(bersih).not.toMatch(/bergiliran|penyedia|detail model/i);
+    expect(bersih).toContain("Aku belajar dari banyak teks.");
+    expect(bersih).toContain("Mau coba tanyain sesuatu?");
+    // kalimat biasa yang kebetulan memuat kata "giliran" tidak ikut terbuang
+    expect(bersihkanBalasan("Sekarang giliran kamu menjawab. Penyedia listrik di sini bagus.")).toBe("Sekarang giliran kamu menjawab. Penyedia listrik di sini bagus.");
+  });
+
+  it("jawaban yang membocorkan cara kerja disaring sebelum sampai ke grup", async () => {
+    await siapkan(["claude"]);
+    jawab.claude = () => ok("*Fable 5* di sini.\n\nJawabanku dikerjakan bergiliran oleh beberapa penyedia AI tanpa detail model spesifik. Kalau mau, tanyakan hal lain.");
+    const r = await kirim("/ai kenapa kamu bisa pintar banget?");
+    expect(r).toContain("Fable 5");
+    expect(r).not.toMatch(/bergiliran|penyedia|detail model/i);
+    expect(r).toContain("tanyakan hal lain");
+  });
+
+  it("instruksi kualitas: langsung ke inti, spesifik, panjang menyesuaikan, batas hanya disebut kalau relevan", () => {
+    expect(SYSTEM_GRUP).toContain("Langsung ke inti");
+    expect(SYSTEM_GRUP).toContain("Substantif dan spesifik");
+    expect(SYSTEM_GRUP).toContain("Sesuaikan panjang dengan soalnya");
+    expect(SYSTEM_GRUP).toContain("HANYA kalau permintaannya memang membutuhkan itu");
+    expect(SYSTEM_EDITOR).toContain("selevel jawaban asisten AI premium");
+    expect(SYSTEM_EDITOR).toContain("Buang basa-basi");
+  });
+});
+
+describe("Groq di AI grup: penyedia keempat", () => {
+  const SEMUA = ["claude", "gemini", "openrouter", "groq"] as const;
+  const adaGabungan = (pr: string) => pr.includes("## Jawaban A");
+  const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+  const pasang = () => {
+    jawab.claude = (pr) => (adaGabungan(pr) ? ok("FINAL claude") : ok("draf claude"));
+    jawab.gemini = (pr) => (adaGabungan(pr) ? ok("FINAL gemini") : ok("draf gemini"));
+    jawab.openrouter = (pr) => (adaGabungan(pr) ? ok("FINAL openrouter") : ok("draf openrouter"));
+    jawab.groq = (pr) => (adaGabungan(pr) ? ok("FINAL groq") : ok("draf groq"));
+  };
+
+  it("bergiliran: Claude → Gemini → OpenRouter → Groq → Claude …", async () => {
+    await siapkan([...SEMUA]);
+    for (let i = 0; i < 8; i++) await kirim(`/ai tanya ${i}`, { nomor: `62811000030${i}`, now: at(12, i) });
+    expect(dipanggil).toEqual(["claude", "gemini", "openrouter", "groq", "claude", "gemini", "openrouter", "groq"]);
+  });
+
+  it("gabungan: empat draf sekaligus (berlabel A–D, urutan tetap) lalu satu penggabungan oleh Gemini", async () => {
+    await siapkan([...SEMUA], { strategi: "gabung" });
+    pasang();
+    const r = await kirim("/ai halo");
+    expect(r).toContain("FINAL gemini");
+    expect(dipanggil.slice(0, 4).sort()).toEqual(["claude", "gemini", "groq", "openrouter"]);
+    expect(dipanggil).toHaveLength(5);
+    expect(dipanggil[4]).toBe("gemini");
+    const g = prompts.find(adaGabungan)!;
+    expect(g).toMatch(/## Jawaban A\ndraf claude[\s\S]*## Jawaban B\ndraf gemini[\s\S]*## Jawaban C\ndraf openrouter[\s\S]*## Jawaban D\ndraf groq/);
+    expect(r).toMatch(/_digabung dari Claude · haiku, Gemini · gemini-[\w.-]+, OpenRouter · [\w.-]+, Groq · llama-3\.3-70b-versatile_$/);
+  });
+
+  it("penggabung cadangan: Gemini tidak ada → Groq (cepat) yang menggabungkan; Groq gagal → OpenRouter", async () => {
+    await siapkan(["claude", "openrouter", "groq"], { strategi: "gabung" });
+    pasang();
+    expect(await kirim("/ai halo", { nomor: "628111111101", now: at(12, 0) })).toContain("FINAL groq");
+    dipanggil = [];
+    jawab.groq = (pr) => (adaGabungan(pr) ? sibuk() : ok("draf groq"));
+    expect(await kirim("/ai halo lagi", { nomor: "628111111102", now: at(12, 1) })).toContain("FINAL openrouter");
+  });
+
+  it("Groq kehabisan batas: penyedia lain tetap menjawab (bergiliran: pindah ke berikutnya)", async () => {
+    await siapkan([...SEMUA]);
+    jawab.groq = () => ({ ok: false, alasan: "limit", pesan: "Rate limit reached", durasiMs: 3 });
+    for (let i = 0; i < 4; i++) expect(await kirim(`/ai t${i}`, { nomor: `62811000040${i}`, now: at(12, i) })).toMatch(/jawaban (claude|gemini|openrouter)/);
+  });
+
+  it("foto: Groq tidak ikut; OpenRouter bermodel terpasang juga tidak", async () => {
+    await siapkan([...SEMUA], { strategi: "gabung" });
+    pasang();
+    const r = await prosesPesanGrup(db, { nomor: "628111111111", text: "/ai ini apa?", waktu: at(12), gambar: async () => PNG, grup: { jid: GRUP, nama: "Budi", disapa: false } }, at(12));
+    expect(r).toContain("FINAL");
+    expect(dipanggil).not.toContain("groq");
+    expect(dipanggil).not.toContain("openrouter");
+    expect(dipanggil.slice(0, 2).sort()).toEqual(["claude", "gemini"]);
+  });
+
+  it("`!aigrup aktif` & status menyebut keempat penyedia; peta Koneksi memuat Groq di roda", async () => {
+    await siapkan([...SEMUA], { strategi: "gabung" });
+    await setSetting(db, "grup_ai_jid", "");
+    const r = await kirim("!aigrup aktif", { nomor: OWNER, jid: GRUP });
+    expect(r).toContain("Claude + Gemini + OpenRouter + Groq");
+    expect(await kirim("!aigrup status", { nomor: OWNER })).toContain("Penyedia: Claude + Gemini + OpenRouter + Groq");
+    expect((await dataKoneksi(db, at(12))).grup.roda).toEqual(["claude", "gemini", "openrouter", "groq"]);
   });
 });

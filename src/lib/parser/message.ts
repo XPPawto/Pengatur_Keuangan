@@ -54,7 +54,7 @@ export type ParsedMessage =
   | { type: "rinci" }
   | { type: "abaikan" }
   /** `penyedia` terisi kalau pesan diawali kode penyedia (`or` OpenRouter, `gm` Gemini): hanya penyedia itu yang dipakai, tanpa pindah ke cadangan */
-  | { type: "tanya"; pertanyaan: string; penyedia?: "gemini" | "openrouter" }
+  | { type: "tanya"; pertanyaan: string; penyedia?: "gemini" | "openrouter" | "groq" }
   | { type: "ingat"; isi: string }
   | { type: "lupakan"; id: number }
   | { type: "memori" }
@@ -197,9 +197,9 @@ export function parseMessage(raw: string, dict: CategoryDictionary = DEFAULT_DIC
   if (/^[1-9]$/.test(t)) return { type: "pilihan", n: Number(t) };
 
   // asisten AI & memori
-  const tanya = /^(?:(or|openrouter)|(gm|gemini)|tanya|ai|asisten|claude)\b[\s:,]*/.exec(t);
+  const tanya = /^(?:(or|openrouter)|(gm|gemini)|(gq|groq)|tanya|ai|asisten|claude)\b[\s:,]*/.exec(t);
   if (tanya) {
-    const penyedia = tanya[1] ? ("openrouter" as const) : tanya[2] ? ("gemini" as const) : undefined;
+    const penyedia = tanya[1] ? ("openrouter" as const) : tanya[2] ? ("gemini" as const) : tanya[3] ? ("groq" as const) : undefined;
     return { type: "tanya", pertanyaan: raw.trim().replace(/^[^\s:,]+[\s:,]*/, "").trim(), ...(penyedia ? { penyedia } : {}) };
   }
   if (/^(memori|ingatan|isi memori|lihat memori)$/.test(t)) return { type: "memori" };

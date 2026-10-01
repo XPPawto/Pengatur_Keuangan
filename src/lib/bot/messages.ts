@@ -53,7 +53,7 @@ export const BANTUAN = `*DompetKos — daftar perintah*
 
 *Asisten AI* (kalau sudah disambungkan ke Claude)
 • Tanya bebas: \`tanya boleh beli sepatu 150rb?\`, \`berapa jajan gw september?\`
-• Pilih model: \`or <pesan>\` (OpenRouter) · \`gm <pesan>\` (Gemini). Tanpa kode: Claude dulu, cadangan kalau Claude nggak bisa
+• Pilih model: \`or <pesan>\` (OpenRouter) · \`gm <pesan>\` (Gemini) · \`gq <pesan>\` (Groq). Tanpa kode: Claude dulu, cadangan kalau Claude nggak bisa
 • Cerita bebas: \`tadi geprek 15 sama es teh 5, kemarin bensin 10\`
 • \`rencanain makan seminggu budget 140rb\` · \`kenapa minggu ini boros?\`
 • \`bantu bilang ke ayah butuh 100rb buat praktikum\`
