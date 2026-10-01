@@ -16,11 +16,11 @@ export function useWidth<T extends HTMLElement>(awal = 320) {
 }
 
 /** Angka sumbu yang rapi: 0, 50rb, 100rb, … */
-export function niceTicks(max: number, count = 4): number[] {
+export function niceTicks(max: number, count = 4, bulat = false): number[] {
   if (max <= 0) return [0];
   const raw = max / count;
   const mag = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? raw;
+  const step = Math.max(bulat ? 1 : 0, (bulat ? [1, 2, 5, 10] : [1, 2, 2.5, 5, 10]).map((m) => m * mag).find((s) => s >= raw) ?? raw);
   const out: number[] = [];
   for (let v = 0; v <= max + step * 0.001; v += step) out.push(Math.round(v));
   if (out[out.length - 1] < max) out.push(out[out.length - 1] + step);

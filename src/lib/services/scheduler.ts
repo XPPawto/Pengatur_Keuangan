@@ -11,6 +11,8 @@ import { saranMingguan } from "./autopilot";
 import { getSetting } from "./settings";
 import { unpaidBills } from "./bills";
 import { diffDays } from "../time";
+import { statusAI } from "../ai/panggil";
+import { reviewMingguanAI } from "../ai/asisten";
 
 export type JenisPengingat = "uang_masuk" | "pagi" | "malam" | "tagihan" | "saran" | "rekap" | "laporan_keluarga";
 
@@ -20,7 +22,7 @@ export const PENGINGAT: { jenis: JenisPengingat; jam: string; label: string; ket
   { jenis: "malam", jam: "21:00", label: "Cek catatan malam", keterangan: "Hanya kalau hari ini belum ada catatan" },
   { jenis: "tagihan", jam: "09:00", label: "Tagihan H-3 & H-1", keterangan: "Nominal, saldo amplop, cukup atau kurang" },
   { jenis: "saran", jam: "19:00", label: "Saran autopilot (Sabtu)", keterangan: "Saran pindah uang untuk amankan tagihan & target, cukup balas ok" },
-  { jenis: "rekap", jam: "20:00", label: "Rekap mingguan (Sabtu)", keterangan: "Total per amplop, streak, progres target" },
+  { jenis: "rekap", jam: "20:00", label: "Rekap mingguan (Sabtu)", keterangan: "Total per amplop, streak, progres target, plus evaluasi & tantangan dari asisten AI kalau aktif" },
   { jenis: "laporan_keluarga", jam: "20:00", label: "Laporan keluarga (Sabtu)", keterangan: "Laporan sopan untuk nomor berperan keluarga" },
 ];
 
@@ -161,7 +163,15 @@ export async function jadwalkanPengingat(db: Db, now: Date): Promise<number> {
     }
     const rk = on("rekap");
     if (period && rk.aktif && dalamJendela(now, rk.jam)) {
-      const isi = await rekapLengkap(db, period.id, now);
+      const sudah = await db.outbox.findFirst({ where: { kunci: { startsWith: `rekap:${period.id}:` } } });
+      let isi = sudah ? null : await rekapLengkap(db, period.id, now);
+      // evaluasi & tantangan dari asisten AI (kalau aktif); gagal = rekap tetap terkirim tanpa itu
+      if (isi && (await getSetting(db, "ai_review")) === "1") {
+        if ((await statusAI(db, now)).siap) {
+          const review = await reviewMingguanAI(db, now).catch(() => null);
+          if (review) isi = `${isi}\n\n${review}`;
+        }
+      }
       const penerima = await recipientsFor(db, "pemilik", "laporan");
       if (isi) total += await kirimKe(db, penerima, "rekap", isi, `rekap:${period.id}`, now);
     }

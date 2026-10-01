@@ -10,6 +10,22 @@ export const DEFAULT_SETTINGS = {
   bagi_ekstra: "kado:50,darurat:50",
   /** Nama pengirim default untuk kiriman tambahan. */
   pengirim_default: "Ayah",
+  /** Asisten AI (Claude Code CLI dengan token langganan). */
+  ai_aktif: "1",
+  /** Maksimal pemanggilan AI per hari (menjaga kuota langganan). */
+  ai_batas_harian: "40",
+  /** Model untuk ngobrol, struk, review (alias Claude Code: sonnet | opus | haiku). */
+  ai_model: "sonnet",
+  /** Model untuk tugas kecil (tebak kategori, cek koneksi). */
+  ai_model_ringan: "haiku",
+  /** AI menjawab pesan WhatsApp yang tidak dipahami perintah biasa. */
+  ai_pesan_bebas: "1",
+  /** Foto struk dibaca Claude (fallback OCR lokal). */
+  ai_struk: "1",
+  /** Evaluasi & tantangan dari AI di rekap Sabtu. */
+  ai_review: "1",
+  /** AI menebak amplop untuk kata yang belum dikenal. */
+  ai_tebak_kategori: "1",
 } as const;
 export type SettingKey = keyof typeof DEFAULT_SETTINGS;
 

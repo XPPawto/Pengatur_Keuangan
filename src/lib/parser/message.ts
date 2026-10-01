@@ -53,6 +53,11 @@ export type ParsedMessage =
   | { type: "aktivitas" }
   | { type: "rinci" }
   | { type: "abaikan" }
+  | { type: "tanya"; pertanyaan: string }
+  | { type: "ingat"; isi: string }
+  | { type: "lupakan"; id: number }
+  | { type: "memori" }
+  | { type: "reset_obrolan" }
   | { type: "unknown" };
 
 /** Nama amplop yang dimengerti di perintah `pindah`. */
@@ -190,6 +195,16 @@ export function parseMessage(raw: string, dict: CategoryDictionary = DEFAULT_DIC
   for (const [re, msg] of SIMPLE) if (re.test(t)) return msg;
   if (/^[1-9]$/.test(t)) return { type: "pilihan", n: Number(t) };
 
+  // asisten AI & memori
+  const tanya = /^(?:tanya|ai|asisten|claude)\b[\s:,]*/.exec(t);
+  if (tanya) return { type: "tanya", pertanyaan: raw.trim().replace(/^\S+[\s:,]*/, "").trim() };
+  if (/^(memori|ingatan|isi memori|lihat memori)$/.test(t)) return { type: "memori" };
+  if (/^(reset obrolan|obrolan baru|mulai obrolan baru|lupakan obrolan)$/.test(t)) return { type: "reset_obrolan" };
+  const lupa = /^(?:lupakan|lupain|hapus memori)\s+(?:no\.?\s*|nomor\s+)?(\d+)$/.exec(t);
+  if (lupa) return { type: "lupakan", id: Number(lupa[1]) };
+  const ingat = /^(?:ingat|inget|simpan memori)(?:\s+(?:ya|yah))?(?:\s+(?:bahwa|kalau|kalo))?[\s:,]+(.{3,})$/.exec(t);
+  if (ingat) return { type: "ingat", isi: raw.trim().replace(/^(?:ingat|inget|simpan memori)(?:\s+(?:ya|yah))?(?:\s+(?:bahwa|kalau|kalo))?[\s:,]+/i, "").trim() };
+
   const koreksi = KOREKSI_MASUK_RE.exec(t);
   if (koreksi) return { type: "koreksi_masuk", nominal: nominalOrNull(koreksi[1]) };
 
@@ -263,4 +278,20 @@ export function parseMessage(raw: string, dict: CategoryDictionary = DEFAULT_DIC
   const items = parseExpenses(body, dict);
   if (items) return { type: "expense", items, kemarin: !!kemarin };
   return { type: "unknown" };
+}
+
+const KATA_TANYA = /^(berapa|brp|kapan|kenapa|knp|mengapa|gimana|gmn|bagaimana|apa|apakah|boleh|bolehkah|bisa|bisakah|bantu|bantuin|tolong|buatin|buatkan|bikinin|bikin|masakin|rencana|rencanain|rencanakan|saran|sarannya|menurut|jelasin|jelaskan|analisa|analisis|evaluasi|review|kira|kira2|enaknya|mending|sebaiknya|harusnya|cek apakah|hitungin|hitung|bandingin|bandingkan|ide|idenya)\b/;
+const KATA_SAMBUNG = /\b(tadi|terus|trus|kemarin|kmrn|kemaren|barusan|abis|habis|soalnya|gara|karena)\b/;
+
+/**
+ * Kalimat bebas yang lebih cocok dijawab asisten AI daripada parser perintah: pertanyaan, permintaan,
+ * atau cerita pengeluaran panjang yang parser cuma bisa tebak setengah-setengah.
+ */
+export function kalimatBebas(raw: string, parsed: ParsedMessage): boolean {
+  const t = normalize(raw);
+  const kata = t.split(" ").length;
+  if (parsed.type === "unknown") return kata >= 3 || t.includes("?");
+  if (parsed.type !== "expense") return false;
+  if (t.includes("?") || KATA_TANYA.test(t)) return true;
+  return parsed.items.some((i) => i.nama.split(" ").length >= 5 || (kata >= 5 && KATA_SAMBUNG.test(i.nama)));
 }

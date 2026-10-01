@@ -8,6 +8,7 @@ import { jadwalkanPengingat, dalamJendela } from "../src/lib/services/scheduler"
 import { kirimAntrean } from "../src/lib/services/sender";
 import { backupDatabase, listBackups } from "../src/lib/services/backup";
 import { alarmKesehatan } from "../src/lib/services/health";
+import { cekPulihAI } from "../src/lib/ai/panggil";
 import { wibWeekday } from "../src/lib/time";
 
 process.env.TZ = "Asia/Jakarta";
@@ -25,8 +26,19 @@ async function main() {
   manager.startPolling();
   log(`jalan. Nomor pemilik: ${ownerNumbers().join(", ")}. Sambungkan WhatsApp dari halaman /whatsapp di website.`);
 
-  // Penjadwal pengingat (tiap menit) — semua jadwal pakai WIB.
+  // Penjadwal pengingat (tiap menit) — semua jadwal pakai WIB. Tidak tumpang-tindih kalau satu putaran
+  // lama (mis. menunggu evaluasi dari asisten AI).
+  let jadwalJalan = false;
   const tickJadwal = async () => {
+    if (jadwalJalan) return;
+    jadwalJalan = true;
+    try {
+      await putaranJadwal();
+    } finally {
+      jadwalJalan = false;
+    }
+  };
+  const putaranJadwal = async () => {
     const now = new Date();
     try {
       const n = await jadwalkanPengingat(db, now);
@@ -56,6 +68,11 @@ async function main() {
       if (n) log(`${n} peringatan sistem masuk antrean`);
     } catch (e) {
       log(`cek kesehatan error: ${e}`);
+    }
+    try {
+      if (await cekPulihAI(db, new Date())) log("asisten AI aktif lagi");
+    } catch (e) {
+      log(`cek AI error: ${e}`);
     }
   };
   const sehatTimer = setInterval(() => void tickSehat(), 30 * 60_000);

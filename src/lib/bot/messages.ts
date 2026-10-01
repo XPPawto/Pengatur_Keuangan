@@ -51,6 +51,15 @@ export const BANTUAN = `*DompetKos — daftar perintah*
 
 *Masak*: \`belanja\` · \`menu\`
 
+*Asisten AI* (kalau sudah disambungkan ke Claude)
+• Tanya bebas: \`tanya boleh beli sepatu 150rb?\`, \`berapa jajan gw september?\`
+• Cerita bebas: \`tadi geprek 15 sama es teh 5, kemarin bensin 10\`
+• \`rencanain makan seminggu budget 140rb\` · \`kenapa minggu ini boros?\`
+• \`bantu bilang ke ayah butuh 100rb buat praktikum\`
+• Foto struk / bukti transfer dibaca Claude
+• \`ingat kado buat adik\` · \`memori\` · \`lupakan 2\` · \`reset obrolan\`
+Semua usulan AI baru jalan setelah lo balas \`ok\`.
+
 Nominal bebas: 12k, 12rb, 12 ribu, 12.000, 1,5jt.`;
 
 export const TAK_PAHAM = "Gw belum ngerti maksudnya. Coba `tempe 5k`, `sisa`, atau `bantuan`.";

@@ -13,6 +13,8 @@ export interface IncomingWaMessage {
 
 export interface WhatsAppGateway {
   sendMessage(nomor: string, text: string): Promise<void>;
+  /** tampilkan "sedang mengetik…" (opsional; dipakai saat asisten AI berpikir) */
+  mengetik?(nomor: string): Promise<void>;
   onMessage(handler: (m: IncomingWaMessage) => void | Promise<void>): void;
 }
 

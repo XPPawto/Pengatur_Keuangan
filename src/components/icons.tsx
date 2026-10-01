@@ -11,6 +11,8 @@ const PATHS = {
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
+  minus: <path d="M5 12h14" />,
+  maximize: <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" />,
   trophy: (
     <>
       <path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z" />
@@ -18,6 +20,18 @@ const PATHS = {
     </>
   ),
   pulse: <path d="M3 12h4l3-8 4 16 3-8h4" />,
+  bot: (
+    <>
+      <rect x="4" y="8" width="16" height="12" rx="3" />
+      <path d="M12 8V4.5M9.5 4.5h5M9 13.5v1M15 13.5v1M2 13v3M22 13v3" />
+    </>
+  ),
+  brain: (
+    <>
+      <path d="M12 5a3 3 0 0 0-5.8-1A3 3 0 0 0 4 8a3 3 0 0 0-.6 5.5A3.5 3.5 0 0 0 7 19a3 3 0 0 0 5 1.5z" />
+      <path d="M12 5a3 3 0 0 1 5.8-1A3 3 0 0 1 20 8a3 3 0 0 1 .6 5.5A3.5 3.5 0 0 1 17 19a3 3 0 0 1-5 1.5zM12 5v15.5" />
+    </>
+  ),
   compass: (
     <>
       <circle cx="12" cy="12" r="9" />

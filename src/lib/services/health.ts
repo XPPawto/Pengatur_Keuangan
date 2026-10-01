@@ -5,6 +5,7 @@ import { wibDate } from "../time";
 import { BACKUP_DIR, listBackups } from "./backup";
 import { enqueue } from "./outbox";
 import { recipientsFor } from "./recipients";
+import { statusAI } from "../ai/panggil";
 
 export type Status = "ok" | "peringatan" | "masalah";
 
@@ -95,6 +96,14 @@ export async function cekKesehatan(db: Db, now: Date) {
     nama: "Penyimpanan",
     status: bebas !== null && bebas < 200 * MB ? "masalah" : bebas !== null && bebas < 1024 * MB ? "peringatan" : "ok",
     detail: `Database ${(ukuranDb / MB).toFixed(1)} MB · backup ${(ukuranFolder(BACKUP_DIR) / MB).toFixed(1)} MB${bebas !== null ? ` · sisa disk ${(bebas / 1024 / MB).toFixed(1)} GB` : ""}`,
+  });
+
+  const ai = await statusAI(db, now);
+  cek.push({
+    kode: "ai",
+    nama: "Asisten AI (Claude)",
+    status: !ai.aktif || ai.kondisi === "belum_diatur" ? "ok" : ["belum_login", "tidak_ada"].includes(ai.kondisi) ? "masalah" : ["limit", "kuota", "sibuk", "timeout", "gagal"].includes(ai.kondisi) ? "peringatan" : "ok",
+    detail: !ai.aktif ? "Dimatikan" : ai.kondisi === "belum_diatur" ? "Belum disambungkan (opsional)" : `${ai.label} · ${ai.pemakaian.hariIni}/${ai.pemakaian.batas} pemakaian hari ini`,
   });
 
   const status: Status = cek.some((c) => c.status === "masalah") ? "masalah" : cek.some((c) => c.status === "peringatan") ? "peringatan" : "ok";

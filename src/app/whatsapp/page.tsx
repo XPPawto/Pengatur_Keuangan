@@ -1,14 +1,6 @@
-import WaPanel from "@/components/WaPanel";
-import { Alert, PageHeader } from "@/components/ui";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Koneksi WhatsApp" };
-
+/** Halaman lama: koneksi WhatsApp sekarang digabung dengan Claude di halaman Koneksi. */
 export default function WhatsAppPage() {
-  return (
-    <div className="mx-auto max-w-2xl space-y-5">
-      <PageHeader title="Koneksi WhatsApp" subtitle="Bot berjalan sebagai perangkat tertaut di nomor cadangan." />
-      <Alert tone="warn">Library WhatsApp tidak resmi: nomor bot bisa diblokir kapan saja. Jangan pakai nomor utama atau nomor penerima.</Alert>
-      <WaPanel />
-    </div>
-  );
+  redirect("/koneksi#whatsapp");
 }

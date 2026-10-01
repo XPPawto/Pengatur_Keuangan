@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { seedDatabase } from "@/lib/seed";
 
 const TABEL = [
+  "aiCall", "aiChat", "aiMemori", "kataKategori",
   "activityLog", "reconciliation", "debtPayment", "debt", "extraIncome",
   "pendingAction", "messageLog", "outbox", "loginCode", "shoppingCheck", "holdRequest", "dailyLog",
   "transfer", "transaction", "allocation", "period", "bill", "goal", "shoppingItem", "menuItem", "laukRotasi",
