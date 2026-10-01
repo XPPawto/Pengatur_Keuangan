@@ -4,6 +4,8 @@ import path from "node:path";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleMessage } from "@/lib/bot/handler";
+import { parseMessage } from "@/lib/parser/message";
+import { tanyaAsisten } from "@/lib/ai/asisten";
 import { fromWib } from "@/lib/time";
 import type { HasilClaude } from "@/lib/ai/claude";
 import { golongkanGemini, penjalanGeminiApi, penjalanGeminiCli } from "@/lib/ai/gemini";
@@ -287,5 +289,143 @@ describe("Gemini lewat API key (API resmi langsung)", () => {
     const h = await penjalanGeminiApi({ system: "s", prompt: "p", model: "../../etc", apiKey: KUNCI_G });
     expect(h.ok).toBe(false);
     expect(f).not.toHaveBeenCalled();
+  });
+});
+
+describe("pilih penyedia & model sendiri (or / gm / website)", () => {
+  const NOMOR = "085163544535";
+  const wa = (text: string, now = at("2026-10-05")) => handleMessage(db, { nomor: NOMOR, text, now });
+  const mulaiPeriode = async () => {
+    await handleMessage(db, { nomor: NOMOR, text: "masuk 300", now: at("2026-10-04", 10) });
+    await handleMessage(db, { nomor: NOMOR, text: "ok", now: at("2026-10-04", 10) });
+  };
+  const TOKEN_C = "token-claude-tes-0123456789";
+
+  it("parser: or / gm memilih penyedia; tanya, ai, asisten, claude tetap otomatis", () => {
+    expect(parseMessage("or bagaimana misalnya kalau gw beli sepatu harga 150k")).toEqual({ type: "tanya", pertanyaan: "bagaimana misalnya kalau gw beli sepatu harga 150k", penyedia: "openrouter" });
+    expect(parseMessage("gm boleh beli sepatu 150rb?")).toEqual({ type: "tanya", pertanyaan: "boleh beli sepatu 150rb?", penyedia: "gemini" });
+    expect(parseMessage("OR: Halo Dunia")).toEqual({ type: "tanya", pertanyaan: "Halo Dunia", penyedia: "openrouter" });
+    expect(parseMessage("gemini:halo")).toEqual({ type: "tanya", pertanyaan: "halo", penyedia: "gemini" });
+    expect(parseMessage("or")).toEqual({ type: "tanya", pertanyaan: "", penyedia: "openrouter" });
+    // tanpa kode penyedia: perilaku lama (otomatis)
+    expect(parseMessage("tanya halo")).toEqual({ type: "tanya", pertanyaan: "halo" });
+    expect(parseMessage("claude halo")).toEqual({ type: "tanya", pertanyaan: "halo" });
+    // "or" / "gm" hanya kode kalau berdiri sendiri sebagai kata pertama
+    expect(parseMessage("oranye 5k").type).not.toBe("tanya");
+    expect(parseMessage("gmail 5k").type).not.toBe("tanya");
+  });
+
+  it("WA `or`: hanya OpenRouter yang dipanggil, balasan diberi tanda penyedia + model", async () => {
+    await nyalakanCadangan();
+    await simpanTokenAI(db, TOKEN_C);
+    await mulaiPeriode();
+    jawab.openrouter = () => ok(JSON.stringify({ balasan: "Sebaiknya tunda dulu.", aksi: [], memori: [] }));
+    const [r] = await wa("or bagaimana misalnya kalau gw beli sepatu harga 150k");
+    expect(r).toContain("Sebaiknya tunda dulu.");
+    expect(r).toContain("dijawab lewat OpenRouter · meta-llama/llama-3.3-70b-instruct:free");
+    expect(r).not.toContain("karena Claude");
+    expect(dipanggil).toEqual(["openrouter:meta-llama/llama-3.3-70b-instruct:free"]);
+  });
+
+  it("WA `gm`: hanya Gemini, walau saklar cadangan Gemini mati; tanpa kode tetap Claude dulu", async () => {
+    await simpanKunciCadangan(db, "gemini", KUNCI_G); // saklar ai_gemini_aktif tetap mati
+    await simpanTokenAI(db, TOKEN_C);
+    await mulaiPeriode();
+    jawab.gemini = () => ok("Dari Gemini.");
+    jawab.claude = () => ok("Dari Claude.");
+    const [a] = await wa("gm halo");
+    expect(a).toContain("Dari Gemini.");
+    expect(a).toMatch(/dijawab lewat Gemini · gemini-[\w.-]+/);
+    expect(dipanggil).toEqual([expect.stringMatching(/^gemini:gemini-[\w.-]+:AIza/)]);
+
+    dipanggil = [];
+    const [b] = await wa("tanya halo lagi");
+    expect(b).toContain("Dari Claude.");
+    expect(b).not.toContain("dijawab lewat");
+    expect(dipanggil).toEqual(["claude"]);
+  });
+
+  it("WA tanpa kode: Claude gagal (limit) → baru pindah ke cadangan yang aktif", async () => {
+    await nyalakanCadangan();
+    await simpanTokenAI(db, TOKEN_C);
+    await mulaiPeriode();
+    jawab.claude = () => gagal("limit");
+    jawab.gemini = () => ok("Dari Gemini.");
+    const [r] = await wa("tanya halo");
+    expect(r).toContain("Dari Gemini.");
+    expect(r).toContain("karena Claude lagi nggak bisa dipakai");
+    expect(dipanggil).toEqual(["claude", expect.stringMatching(/^gemini:/)]);
+  });
+
+  it("WA `or` gagal: tidak pindah ke penyedia lain, alasannya disebut jelas", async () => {
+    await nyalakanCadangan();
+    await simpanTokenAI(db, TOKEN_C);
+    await mulaiPeriode();
+    jawab.openrouter = () => ({ ok: false, alasan: "sibuk", pesan: "Provider returned error", durasiMs: 3 });
+    const [r] = await wa("or halo");
+    expect(r).toContain("OpenRouter nggak bisa dipakai");
+    expect(r).toContain("Provider returned error");
+    expect(dipanggil).toEqual(["openrouter:meta-llama/llama-3.3-70b-instruct:free"]);
+  });
+
+  it("WA `or` / `gm` tanpa pertanyaan: dijelaskan cara pakainya, tanpa memanggil AI", async () => {
+    await nyalakanCadangan();
+    const [r] = await wa("or");
+    expect(r).toContain("or boleh beli sepatu 150rb?");
+    const [g] = await wa("gm");
+    expect(g).toContain("gm boleh beli sepatu 150rb?");
+    expect(dipanggil).toEqual([]);
+  });
+
+  it("panggilAI: model pilihan dipakai & dikembalikan, saklar mati tidak menghalangi, tanpa pindah penyedia", async () => {
+    await simpanKunciCadangan(db, "gemini", KUNCI_G);
+    const h = await panggilAI(db, { fitur: "chat_web", system: "s", prompt: "p", now: at("2026-10-05"), penyedia: "gemini", model: "gemini-3.5-flash-lite" });
+    expect(h).toMatchObject({ ok: true, penyedia: "gemini", model: "gemini-3.5-flash-lite" });
+    expect(dipanggil).toEqual([`gemini:gemini-3.5-flash-lite:${KUNCI_G}`]);
+  });
+
+  it("panggilAI: Claude dengan model pilihan memakai model itu", async () => {
+    pulih.unshift(setPenjalanAI(async (p) => (dipanggil.push(`claude:${p.model}`), ok("c"))));
+    await simpanTokenAI(db, TOKEN_C);
+    const h = await panggilAI(db, { fitur: "chat_web", system: "s", prompt: "p", now: at("2026-10-05"), penyedia: "claude", model: "opus" });
+    expect(h).toMatchObject({ ok: true, penyedia: "claude", model: "opus" });
+    expect(dipanggil).toEqual(["claude:opus"]);
+  });
+
+  it("panggilAI: model pilihan yang gagal tidak mengubah status penyedia dan tidak pindah penyedia", async () => {
+    await nyalakanCadangan();
+    await simpanTokenAI(db, TOKEN_C);
+    jawab.gemini = () => gagal("gagal");
+    const h = await panggilAI(db, { fitur: "chat_web", system: "s", prompt: "p", now: at("2026-10-05"), penyedia: "gemini", model: "gemini-9-ngawur" });
+    expect(h).toMatchObject({ ok: false, penyedia: "gemini" });
+    expect(dipanggil).toEqual([`gemini:gemini-9-ngawur:${KUNCI_G}`]);
+    expect(await db.setting.findUnique({ where: { kunci: "ai_status_gemini" } })).toBeNull();
+  });
+
+  it("panggilAI: nama model tidak valid ditolak sebelum penyedia dipanggil", async () => {
+    await nyalakanCadangan();
+    await simpanTokenAI(db, TOKEN_C);
+    const coba = (penyedia: "claude" | "gemini" | "openrouter" | undefined, model: string) => panggilAI(db, { fitur: "chat_web", system: "s", prompt: "p", now: at("2026-10-05"), penyedia, model });
+    expect(await coba("openrouter", "openai/gpt-4o")).toMatchObject({ ok: false, alasan: "gagal" }); // berbayar
+    expect(await coba("gemini", "../../etc")).toMatchObject({ ok: false, alasan: "gagal" });
+    expect(await coba("claude", "sonnet; rm -rf /")).toMatchObject({ ok: false, alasan: "gagal" });
+    expect(await coba(undefined, "sonnet")).toMatchObject({ ok: false, alasan: "gagal" }); // model tanpa penyedia
+    expect(dipanggil).toEqual([]);
+  });
+
+  it("tanyaAsisten (website): penyedia + model pilihan diteruskan dan dikembalikan; gagal tidak pindah penyedia", async () => {
+    await nyalakanCadangan();
+    await simpanTokenAI(db, TOKEN_C);
+    jawab.openrouter = () => ok("Jawaban OR");
+    const r = await tanyaAsisten(db, { kanal: "web", pesan: "halo", now: at("2026-10-05"), penyedia: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free" });
+    expect(r).toMatchObject({ ok: true, penyedia: "openrouter", model: "nvidia/nemotron-3-super-120b-a12b:free", balasan: "Jawaban OR" });
+    expect(dipanggil).toEqual(["openrouter:nvidia/nemotron-3-super-120b-a12b:free"]);
+
+    dipanggil = [];
+    jawab.gemini = () => gagal("sibuk");
+    const g = await tanyaAsisten(db, { kanal: "web", pesan: "halo", now: at("2026-10-05"), penyedia: "gemini" });
+    expect(g).toMatchObject({ ok: false, penyedia: "gemini" });
+    expect(g.balasan).toContain("Gemini nggak bisa dipakai");
+    expect(dipanggil).toHaveLength(1);
   });
 });

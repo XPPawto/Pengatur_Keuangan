@@ -26,7 +26,7 @@ import { cekLonjakan } from "../services/prices";
 import { parseStruk, type HasilStruk } from "../ocr/struk";
 import { addDays, fmtTanggal, fmtTanggalPanjang, wibDate, wibHM } from "../time";
 import { ajariKata, bacaFotoAI, hapusRiwayat, ingat, jalankanAksiAI, lagiNgobrol, lupakan, pesanAIMati, tanyaAsisten, tebakKategoriAI, teksUsulan, type AksiAI } from "../ai/asisten";
-import { statusAI } from "../ai/panggil";
+import { LABEL_PENYEDIA, statusAI } from "../ai/panggil";
 import { ENVELOPE_KODE, KATA_BUKA_KUNCI, type EnvelopeKode } from "../types";
 import { normalizePhone } from "../whitelist";
 import { prosesKeluarga } from "./family";
@@ -172,7 +172,7 @@ async function proses(db: Db, nomor: string, text: string, now: Date): Promise<s
 
   // Asisten AI: pertanyaan, permintaan, cerita bebas, atau lanjutan obrolan
   let catatanAI: string | null = null;
-  if (parsed.type === "tanya") return cmdTanya(db, nomor, parsed.pertanyaan, now);
+  if (parsed.type === "tanya") return cmdTanya(db, nomor, parsed.pertanyaan, now, parsed.penyedia);
   const arah = await keAsisten(db, nomor, text, parsed, pending?.jenis === "ai", now);
   if (arah.ya) {
     const r = await tanyaAsisten(db, { kanal: nomor, pesan: text, now });
@@ -433,13 +433,20 @@ async function keAsisten(db: Db, nomor: string, text: string, parsed: ParsedMess
   return { ya: false, catatan: st.kondisi === "dimatikan" ? undefined : pesanAIMati(st.kondisi === "belum_dicek" || st.kondisi === "ok" ? "gagal" : st.kondisi, st.tahanSampai) };
 }
 
-async function cmdTanya(db: Db, nomor: string, pertanyaan: string, now: Date): Promise<string[]> {
+const KODE_PENYEDIA = { gemini: "gm", openrouter: "or" } as const;
+
+/** `penyedia` terisi kalau pesan diawali `or` (OpenRouter) / `gm` (Gemini): hanya penyedia itu, tanpa pindah ke cadangan. */
+async function cmdTanya(db: Db, nomor: string, pertanyaan: string, now: Date, penyedia?: "gemini" | "openrouter"): Promise<string[]> {
   if (!pertanyaan) {
-    return ["Tanya apa aja soal duit lo. Contoh:\n• `tanya boleh beli sepatu 150rb?`\n• `tanya berapa jajan gw bulan ini?`\n• `tanya rencanain makan seminggu 140rb`"];
+    if (penyedia) {
+      const k = KODE_PENYEDIA[penyedia];
+      return [`Tulis pertanyaannya setelah \`${k}\` (dijawab ${LABEL_PENYEDIA[penyedia]}). Contoh: \`${k} boleh beli sepatu 150rb?\``];
+    }
+    return ["Tanya apa aja soal duit lo. Contoh:\n• `tanya boleh beli sepatu 150rb?`\n• `tanya berapa jajan gw bulan ini?`\n• `tanya rencanain makan seminggu 140rb`\n\nPilih model tertentu: `or <pesan>` (OpenRouter) atau `gm <pesan>` (Gemini). Tanpa kode, Claude dulu, cadangan kalau Claude nggak bisa."];
   }
-  const r = await tanyaAsisten(db, { kanal: nomor, pesan: pertanyaan, now });
-  if (r.ok) return balasAsisten(db, nomor, r, now);
-  const baris = [pesanAIMati(r.alasan)];
+  const r = await tanyaAsisten(db, { kanal: nomor, pesan: pertanyaan, now, penyedia });
+  if (r.ok) return balasAsisten(db, nomor, r, now, !!penyedia);
+  const baris = [r.balasan];
   const period = await getCurrentPeriod(db);
   if (period) {
     const [balances, daily] = await Promise.all([getBalances(db, period.id), getDailyStatus(db, now)]);
@@ -449,10 +456,12 @@ async function cmdTanya(db: Db, nomor: string, pertanyaan: string, now: Date): P
   return [baris.join("\n")];
 }
 
-async function balasAsisten(db: Db, nomor: string, r: Awaited<ReturnType<typeof tanyaAsisten>>, now: Date): Promise<string[]> {
+async function balasAsisten(db: Db, nomor: string, r: Awaited<ReturnType<typeof tanyaAsisten>>, now: Date, dipilih = false): Promise<string[]> {
   const baris = [r.balasan];
   if (r.memori.length) baris.push("", ...r.memori.map((m) => `(${m})`));
-  if (r.penyedia && r.penyedia !== "claude") baris.push("", `_(dijawab lewat ${r.penyedia === "gemini" ? "Gemini" : "OpenRouter"} karena Claude lagi nggak bisa dipakai)_`);
+  const nama = r.penyedia === "gemini" ? "Gemini" : r.penyedia === "openrouter" ? "OpenRouter" : "Claude";
+  if (dipilih) baris.push("", `_(dijawab lewat ${nama}${r.model ? ` · ${r.model}` : ""})_`);
+  else if (r.penyedia && r.penyedia !== "claude") baris.push("", `_(dijawab lewat ${nama} karena Claude lagi nggak bisa dipakai)_`);
   if (r.aksi.length) {
     await setPending(db, nomor, { jenis: "ai", aksi: r.aksi }, now);
     baris.push("", teksUsulan(r.aksi));

@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { AKTOR_WEB } from "@/lib/services/activity-log";
 import { setSetting } from "@/lib/services/settings";
 import { hapusRiwayat, ingat, jalankanAksiAI, lupakan, tanyaAsisten, validasiAksi, type AksiAI } from "@/lib/ai/asisten";
-import { CADANGAN, LABEL_KONDISI, LABEL_PENYEDIA, labelKondisiCadangan, simpanKunciCadangan, simpanTokenAI, tesKoneksiAI, type KondisiAI, type PenyediaCadangan } from "@/lib/ai/panggil";
+import { CADANGAN, LABEL_KONDISI, LABEL_PENYEDIA, labelKondisiCadangan, simpanKunciCadangan, simpanTokenAI, tesKoneksiAI, type KondisiAI, type Penyedia, type PenyediaCadangan } from "@/lib/ai/panggil";
 import { modelGratis } from "@/lib/ai/openrouter";
 import type { FormState } from "./actions";
 
@@ -19,15 +19,23 @@ export interface JawabanState {
   aksi: AksiAI[];
   memori: string[];
   penyedia?: string;
+  model?: string;
+  /** true kalau penyedia dipilih eksplisit (bukan otomatis dengan cadangan) */
+  dipilih?: boolean;
 }
 
-export async function tanyaAsistenAction(pesan: string): Promise<JawabanState> {
+const PENYEDIA_BOLEH: readonly string[] = ["claude", "gemini", "openrouter"];
+
+/** `pilih` datang dari browser: divalidasi di sini; nama model divalidasi lagi per penyedia di panggilAI. */
+export async function tanyaAsistenAction(pesan: string, pilih?: { penyedia?: string; model?: string }): Promise<JawabanState> {
   await requireLogin();
   const p = pesan.trim();
   if (!p) return { ok: false, balasan: "Tulis pertanyaannya dulu.", aksi: [], memori: [] };
-  const r = await tanyaAsisten(prisma, { kanal: KANAL_WEB, pesan: p, now: new Date() });
+  const penyedia = typeof pilih?.penyedia === "string" && PENYEDIA_BOLEH.includes(pilih.penyedia) ? (pilih.penyedia as Penyedia) : undefined;
+  const model = penyedia && typeof pilih?.model === "string" && pilih.model.trim() ? pilih.model.trim().slice(0, 100) : undefined;
+  const r = await tanyaAsisten(prisma, { kanal: KANAL_WEB, pesan: p, now: new Date(), penyedia, model });
   if (r.memori.length) revalidatePath("/asisten");
-  return { ok: r.ok, balasan: r.balasan, aksi: r.aksi, memori: r.memori, penyedia: r.penyedia };
+  return { ok: r.ok, balasan: r.balasan, aksi: r.aksi, memori: r.memori, penyedia: r.penyedia, model: r.model, dipilih: !!penyedia };
 }
 
 export async function jalankanAksiAction(aksiMentah: unknown): Promise<{ berhasil: string[]; gagal: string[] }> {

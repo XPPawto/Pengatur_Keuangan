@@ -13,7 +13,7 @@ export const CADANGAN = ["gemini", "openrouter"] as const;
 export type PenyediaCadangan = (typeof CADANGAN)[number];
 export const LABEL_PENYEDIA: Record<Penyedia, string> = { claude: "Claude", gemini: "Gemini", openrouter: "OpenRouter" };
 /** Hasil panggilan beserta penyedia yang akhirnya menjawab. */
-export type HasilAI = HasilClaude & { penyedia?: Penyedia };
+export type HasilAI = HasilClaude & { penyedia?: Penyedia; /** model yang benar-benar dipakai */ model?: string };
 
 export type FiturAI = "chat_web" | "chat_wa" | "struk" | "kategori" | "review" | "cek";
 
@@ -257,8 +257,17 @@ export interface PermintaanAI {
   now: Date;
   /** abaikan penahanan setelah gagal (tombol "Tes koneksi") */
   paksa?: boolean;
-  /** hanya pakai penyedia ini (tes koneksi per penyedia) */
+  /** hanya pakai penyedia ini, tanpa pindah ke cadangan (tes koneksi, atau pilihan eksplisit: `or`/`gm` di WhatsApp, pilihan di website) */
   penyedia?: Penyedia;
+  /** pakai model ini, bukan model dari pengaturan. Hanya bersama `penyedia`; divalidasi oleh `modelValid` */
+  model?: string;
+}
+
+/** Nama model yang boleh dipilih langsung. Claude: alias Claude Code (sonnet, opus, …) atau nama lengkap. OpenRouter: wajib gratis (:free). */
+export function modelValid(p: Penyedia, m: string): boolean {
+  if (p === "gemini") return /^gemini-[\w.-]{1,60}$/.test(m);
+  if (p === "openrouter") return modelGratis(m);
+  return /^[\w.\-[\]]{1,60}$/.test(m);
 }
 
 const gagal = (alasan: AlasanGagal, pesan: string): HasilClaude => ({ ok: false, alasan, pesan, durasiMs: 0 });
@@ -286,6 +295,12 @@ export async function panggilAI(db: Db, r: PermintaanAI): Promise<HasilAI> {
     const batas = await getSettingNumber(db, "ai_batas_harian");
     if ((await pemakaianHariIni(db, r.now)) >= batas) return gagal("kuota", `Batas ${batas} pemakaian AI hari ini udah habis.`);
   }
+  if (r.model !== undefined) {
+    if (!r.penyedia) return gagal("gagal", "Model hanya bisa dipilih bersama penyedianya.");
+    if (!modelValid(r.penyedia, r.model)) {
+      return gagal("gagal", r.penyedia === "openrouter" ? `Model "${r.model.slice(0, 80)}" bukan model gratis OpenRouter (harus berakhiran :free).` : `Nama model "${r.model.slice(0, 80)}" tidak valid untuk ${LABEL_PENYEDIA[r.penyedia]}.`);
+    }
+  }
   const urutan = r.penyedia ? [r.penyedia] : await urutanPenyedia(db);
   if (!urutan.length) return gagal("belum_diatur", "Belum ada penyedia AI yang aktif.");
   const adaCadangan = urutan.filter((p) => p !== "claude").map((p) => LABEL_PENYEDIA[p]);
@@ -293,15 +308,18 @@ export async function panggilAI(db: Db, r: PermintaanAI): Promise<HasilAI> {
   let pertama: HasilAI | null = null;
   let tercatat = false;
   for (const p of urutan) {
-    const c: { hasil: HasilClaude; tercatat: boolean } = p === "claude" ? await cobaClaude(db, r, !tercatat, adaCadangan) : await cobaCadangan(db, p, r, !tercatat);
+    const c: HasilCoba = p === "claude" ? await cobaClaude(db, r, !tercatat, adaCadangan) : await cobaCadangan(db, p, r, !tercatat);
     tercatat ||= c.tercatat;
-    if (c.hasil.ok) return { ...c.hasil, penyedia: p };
-    pertama ??= { ...c.hasil, penyedia: p };
+    if (c.hasil.ok) return { ...c.hasil, penyedia: p, model: c.model };
+    pertama ??= { ...c.hasil, penyedia: p, model: c.model };
   }
   return pertama!;
 }
 
-async function cobaClaude(db: Db, r: PermintaanAI, utama: boolean, cadangan: string[]): Promise<{ hasil: HasilClaude; tercatat: boolean }> {
+/** Hasil satu penyedia: `model` terisi kalau penyedia benar-benar dipanggil. */
+type HasilCoba = { hasil: HasilClaude; tercatat: boolean; model?: string };
+
+async function cobaClaude(db: Db, r: PermintaanAI, utama: boolean, cadangan: string[]): Promise<HasilCoba> {
   const tidak = (alasan: AlasanGagal, pesan: string) => ({ hasil: gagal(alasan, pesan), tercatat: false });
   const tok = await getTokenAI(db);
   if (!tok.token && tok.sumber !== "folder") {
@@ -324,7 +342,7 @@ async function cobaClaude(db: Db, r: PermintaanAI, utama: boolean, cadangan: str
     if (hampir) return tidak("limit", `${hampir.label} sudah ${Math.round(hampir.persen)}%, tugas kecil dihemat.`);
   }
 
-  const model = await getSetting(db, r.ringan ? "ai_model_ringan" : "ai_model");
+  const model = r.model ?? (await getSetting(db, r.ringan ? "ai_model_ringan" : "ai_model"));
   // baris "berjalan" dulu supaya peta koneksi bisa menampilkan Claude yang sedang mikir secara langsung
   const log = await db.aiCall.create({ data: { waktu: r.now, fitur: r.fitur, penyedia: "claude", utama, model, status: "berjalan" } });
   let hasil: HasilClaude;
@@ -345,8 +363,9 @@ async function cobaClaude(db: Db, r: PermintaanAI, utama: boolean, cadangan: str
     },
   });
   if (hasil.batas) await simpanBatas(db, hasil.batas, r.now);
-  await catatKondisi(db, st, hasil, r.now, cadangan);
-  return { hasil, tercatat: true };
+  // model pilihan yang gagal (mis. nama model salah) tidak boleh menandai Claude sebagai "mati" / mengirim kabar ke pemilik
+  if (!(r.model && !hasil.ok)) await catatKondisi(db, st, hasil, r.now, cadangan);
+  return { hasil, tercatat: true, model };
 }
 
 async function catatKondisi(db: Db, lama: StatusTersimpan, h: HasilClaude, now: Date, cadangan: string[] = []) {
@@ -492,6 +511,7 @@ async function tandaiModelBuruk(db: Db, model: string, jenis: keyof typeof LEWAT
 
 /** Model yang akan dicoba berurutan. Gemini & OpenRouter dengan model pilihan: satu; OpenRouter otomatis: beberapa. */
 async function modelCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI): Promise<{ daftar: string[]; otomatis: boolean }> {
+  if (r.model) return { daftar: [r.model], otomatis: false };
   if (p === "gemini") {
     const m = await getSetting(db, r.ringan ? "ai_gemini_model_ringan" : "ai_gemini_model");
     return { daftar: m ? [m] : [], otomatis: false };
@@ -505,7 +525,7 @@ async function modelCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI): Prom
   return { daftar: (layak.length ? layak : semua).slice(0, MAKS_COBA_OR), otomatis: true };
 }
 
-async function cobaCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, utama: boolean): Promise<{ hasil: HasilClaude; tercatat: boolean }> {
+async function cobaCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, utama: boolean): Promise<HasilCoba> {
   const tidak = (alasan: AlasanGagal, pesan: string) => ({ hasil: gagal(alasan, pesan), tercatat: false });
   const k = await kunciCadangan(db, p);
   if (!k.kunci && k.sumber !== "login") return tidak("belum_diatur", `${LABEL_PENYEDIA[p]} belum disambungkan.`);
@@ -550,9 +570,12 @@ async function cobaCadangan(db: Db, p: PenyediaCadangan, r: PermintaanAI, utama:
     },
   });
   const iso = r.now.toISOString();
-  const nilai = JSON.stringify({ status: (hasil.ok ? "ok" : hasil.alasan) as KondisiAI, pesan: hasil.ok ? "" : hasil.pesan, terakhirCoba: iso, terakhirOk: hasil.ok ? iso : st.terakhirOk, model } satisfies StatusCadangan);
-  await db.setting.upsert({ where: { kunci: `ai_status_${p}` }, update: { nilai }, create: { kunci: `ai_status_${p}`, nilai } });
-  return { hasil, tercatat: true };
+  // model pilihan yang gagal tidak mengubah status penyedia di panel (bisa jadi cuma salah nama model)
+  if (!(r.model && !hasil.ok)) {
+    const nilai = JSON.stringify({ status: (hasil.ok ? "ok" : hasil.alasan) as KondisiAI, pesan: hasil.ok ? "" : hasil.pesan, terakhirCoba: iso, terakhirOk: hasil.ok ? iso : st.terakhirOk, model } satisfies StatusCadangan);
+    await db.setting.upsert({ where: { kunci: `ai_status_${p}` }, update: { nilai }, create: { kunci: `ai_status_${p}`, nilai } });
+  }
+  return { hasil, tercatat: true, model };
 }
 
 const LABEL_KONDISI_CADANGAN: Partial<Record<KondisiAI, string>> = {

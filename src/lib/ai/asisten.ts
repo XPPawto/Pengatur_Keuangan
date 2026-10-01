@@ -15,7 +15,7 @@ import { recipientsFor } from "../services/recipients";
 import { AI_WORK_DIR, type AlasanGagal } from "./claude";
 import { jenisGambar, MAKS_GAMBAR } from "../keamanan/gambar";
 import { bangunKonteks } from "./konteks";
-import { LABEL_KONDISI, panggilAI } from "./panggil";
+import { LABEL_KONDISI, LABEL_PENYEDIA, panggilAI, type Penyedia } from "./panggil";
 import { SYSTEM_ASISTEN, SYSTEM_KATEGORI, SYSTEM_REVIEW, SYSTEM_STRUK } from "./prompt";
 
 const NAMA: Record<EnvelopeKode, string> = { makan: "Makan", data: "Paket data", paylater: "Paylater", kado: "Tabungan kado", darurat: "Darurat & kos" };
@@ -40,6 +40,8 @@ export interface JawabanAsisten {
   alasan?: AlasanGagal;
   /** penyedia yang menjawab (claude / gemini / openrouter) */
   penyedia?: string;
+  /** model yang dipakai menjawab */
+  model?: string;
 }
 
 // ---------------------------------------------------------------- util
@@ -268,7 +270,7 @@ export async function hapusRiwayat(db: Db, kanal: string) {
  * Ngobrol dengan asisten. `kanal` = nomor WA atau "web" (riwayat terpisah).
  * Memori langsung diterapkan; aksi lain dikembalikan sebagai usulan yang perlu disetujui.
  */
-export async function tanyaAsisten(db: Db, p: { kanal: string; pesan: string; now: Date }): Promise<JawabanAsisten> {
+export async function tanyaAsisten(db: Db, p: { kanal: string; pesan: string; now: Date; penyedia?: Penyedia; model?: string }): Promise<JawabanAsisten> {
   const pesan = p.pesan.trim().slice(0, 2000);
   const [konteks, lalu] = await Promise.all([bangunKonteks(db, p.now), riwayat(db, p.kanal, p.now)]);
   const prompt = [
@@ -281,8 +283,14 @@ export async function tanyaAsisten(db: Db, p: { kanal: string; pesan: string; no
     pesan,
   ].join("\n");
 
-  const h = await panggilAI(db, { fitur: p.kanal === "web" ? "chat_web" : "chat_wa", system: SYSTEM_ASISTEN, prompt, now: p.now, timeoutMs: 120_000 });
-  if (!h.ok) return { ok: false, balasan: pesanAIMati(h.alasan), aksi: [], memori: [], alasan: h.alasan };
+  // penyedia/model dipilih eksplisit: hanya itu yang dicoba (tanpa pindah ke cadangan), penahanan setelah gagal diabaikan
+  const h = await panggilAI(db, { fitur: p.kanal === "web" ? "chat_web" : "chat_wa", system: SYSTEM_ASISTEN, prompt, now: p.now, timeoutMs: 120_000, penyedia: p.penyedia, model: p.model, paksa: p.penyedia ? true : undefined });
+  if (!h.ok) {
+    const balasan = p.penyedia
+      ? `*${LABEL_PENYEDIA[p.penyedia]} nggak bisa dipakai:* ${h.pesan}\nPilih penyedia lain, atau tulis tanpa kode penyedia supaya otomatis (Claude dulu, cadangan kalau Claude nggak bisa).`
+      : pesanAIMati(h.alasan);
+    return { ok: false, balasan, aksi: [], memori: [], alasan: h.alasan, penyedia: p.penyedia };
+  }
 
   const j = ambilJson<{ balasan?: unknown; aksi?: unknown; memori?: unknown }>(h.teks);
   const balasan = (typeof j?.balasan === "string" ? j.balasan : j ? "" : h.teks).trim() || "Oke.";
@@ -309,7 +317,7 @@ export async function tanyaAsisten(db: Db, p: { kanal: string; pesan: string; no
       { kanal: p.kanal, peran: "asisten", isi: aksi.length ? `${balasan}\n${aksi.map((a, i) => `[usulan ${i + 1}] ${ringkasAksi(a)}`).join("\n")}` : balasan, waktu: new Date(p.now.getTime() + 1) },
     ],
   });
-  return { ok: true, balasan, aksi, memori, penyedia: h.penyedia };
+  return { ok: true, balasan, aksi, memori, penyedia: h.penyedia, model: h.model };
 }
 
 // ---------------------------------------------------------------- foto
