@@ -124,6 +124,22 @@ describe("runner Claude Code CLI", () => {
     expect(bacaBatas('{"type":"result","result":"x"}')).toBeUndefined();
   });
 
+  it("bentuk event asli Claude Code: versi baru (unifiedWindows) terbaca, versi lama (tanpa angka) tidak merusak", () => {
+    const ev = (info: unknown) => JSON.stringify({ type: "rate_limit_event", rate_limit_info: info, uuid: "u", session_id: "s" });
+    const dasar = { status: "allowed", resetsAt: 1790854800, rateLimitType: "five_hour", overageStatus: "rejected", overageDisabledReason: "org_level_disabled", isUsingOverage: false };
+    // Claude Code >= ~2.1.28x: membawa persentase sesi 5 jam & mingguan
+    const baru = bacaBatas(ev({ ...dasar, unifiedWindows: { five_hour: { utilization: 0.04, resetsAt: 1790854800 }, seven_day: { utilization: 0.09, resetsAt: 1791392400 } } }));
+    expect(baru).toEqual({
+      status: "allowed",
+      jenis: "five_hour",
+      resetsAt: 1790854800,
+      jendela: { five_hour: { persen: 4, resetsAt: 1790854800 }, seven_day: { persen: 9, resetsAt: 1791392400 } },
+    });
+    // Claude Code 2.1.197: hanya status + waktu reset, tanpa persentase → jendela kosong, status tetap terbaca
+    const lama = bacaBatas(ev(dasar));
+    expect(lama).toMatchObject({ status: "allowed", jenis: "five_hour", resetsAt: 1790854800, jendela: {} });
+  });
+
   it("spawn CLI: 401, limit, timeout, keluaran rusak, CLI tidak ada", async () => {
     expect(await jalankan("MODE:401")).toMatchObject({ ok: false, alasan: "belum_login" });
     expect(await jalankan("MODE:limit")).toMatchObject({ ok: false, alasan: "limit", batas: { status: "rejected" } });
