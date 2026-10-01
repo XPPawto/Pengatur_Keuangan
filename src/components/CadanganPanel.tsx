@@ -27,6 +27,8 @@ export default function CadanganPanel({
   modelGeminiRingan,
   modelOpenRouter,
   modelGratis,
+  autoGemini,
+  autoOpenRouter,
 }: {
   cadangan: Cadangan[];
   claudeAktif: boolean;
@@ -34,6 +36,9 @@ export default function CadanganPanel({
   modelGemini: string;
   modelGeminiRingan: string;
   modelOpenRouter: string;
+  /** pindah ke model lain otomatis kalau modelnya penuh / timeout / ditutup */
+  autoGemini: boolean;
+  autoOpenRouter: boolean;
   modelGratis: ModelGratis[] | null;
 }) {
   const g = cadangan.find((c) => c.penyedia === "gemini")!;
@@ -85,6 +90,11 @@ export default function CadanganPanel({
             <Saklar nama="ai_gemini_aktif" label="Gemini (cadangan)" on={g.aktif} />
             <Saklar nama="ai_openrouter_aktif" label="OpenRouter (cadangan)" on={o.aktif} />
           </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Saklar nama="ai_gemini_auto" label="Gemini: pindah model otomatis kalau penuh" on={autoGemini} />
+            <Saklar nama="ai_openrouter_auto" label="OpenRouter: pindah model otomatis kalau penuh" on={autoOpenRouter} />
+          </div>
+          <p className="hint">Model yang kamu pilih dicoba duluan. Kalau penuh, timeout, atau ditutup, bot pindah ke model lain yang terbukti paling cepat menjawab (maks. 4 percobaan, 30 detik per model). Model yang baru gagal ditahan beberapa menit lalu dicoba lagi sendiri.</p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label htmlFor="ai_urutan_cadangan" className="label">

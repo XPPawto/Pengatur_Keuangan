@@ -10,6 +10,7 @@ import { fromWib } from "@/lib/time";
 import type { HasilClaude } from "@/lib/ai/claude";
 import { golongkanGemini, penjalanGeminiApi, penjalanGeminiCli } from "@/lib/ai/gemini";
 import { aturDaftarModel, golongkanOpenRouter, masalahModel, penjalanOpenRouter } from "@/lib/ai/openrouter";
+import { bacaStatistik, catatModel, tahanSementaraMs, urutkanModel, type StatModel } from "@/lib/ai/modelOtomatis";
 import { panggilAI, pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI, statusAI, statusCadangan, tesKoneksiAI, urutanPenyedia } from "@/lib/ai/panggil";
 import { setSetting } from "@/lib/services/settings";
 import { resetDb } from "./helpers";
@@ -72,7 +73,8 @@ describe("cadangan otomatis", () => {
     jawab.gemini = () => gagal("limit");
     const h = await tanya(at("2026-10-05"));
     expect(h).toMatchObject({ ok: true, penyedia: "openrouter" });
-    expect(dipanggil.map((x) => x.split(":")[0])).toEqual(["claude", "gemini", "openrouter"]);
+    // Gemini mencoba model lain dulu (kuota gratis dihitung per model) sebelum pindah ke OpenRouter
+    expect(dipanggil.map((x) => x.split(":")[0])).toEqual(["claude", "gemini", "gemini", "gemini", "gemini", "openrouter"]);
     const log = await db.aiCall.findMany({ orderBy: { id: "asc" } });
     expect(log.map((l) => [l.penyedia, l.utama, l.status])).toEqual([
       ["claude", true, "limit"],
@@ -199,7 +201,8 @@ describe("OpenRouter mode otomatis", () => {
     expect(h.ok ? "" : h.pesan).toContain("sedang tidak bisa dipakai");
   });
 
-  it("model pilihan sendiri tidak diganti diam-diam", async () => {
+  it("model pilihan sendiri tidak diganti diam-diam (saklar otomatis mati)", async () => {
+    await setSetting(db, "ai_openrouter_auto", "0");
     await setSetting(db, "ai_openrouter_model", "deepseek/deepseek-chat:free");
     jawab.openrouter = () => gagalPesan("gagal", AGENT);
     await tesKoneksiAI(db, at("2026-10-05"), "openrouter");
@@ -300,6 +303,12 @@ describe("pilih penyedia & model sendiri (or / gm / website)", () => {
     await handleMessage(db, { nomor: NOMOR, text: "ok", now: at("2026-10-04", 10) });
   };
   const TOKEN_C = "token-claude-tes-0123456789";
+  beforeEach(() => {
+    aturDaftarModel([
+      { id: "deepseek/deepseek-chat:free", nama: "DeepSeek", konteks: 64000, gambar: false },
+      { id: "google/gemma-3-27b-it:free", nama: "Gemma", konteks: 96000, gambar: true },
+    ]);
+  });
 
   it("parser: or / gm memilih penyedia; tanya, ai, asisten, claude tetap otomatis", () => {
     expect(parseMessage("or bagaimana misalnya kalau gw beli sepatu harga 150k")).toEqual({ type: "tanya", pertanyaan: "bagaimana misalnya kalau gw beli sepatu harga 150k", penyedia: "openrouter" });
@@ -365,7 +374,9 @@ describe("pilih penyedia & model sendiri (or / gm / website)", () => {
     const [r] = await wa("or halo");
     expect(r).toContain("OpenRouter nggak bisa dipakai");
     expect(r).toContain("Provider returned error");
-    expect(dipanggil).toEqual(["openrouter:meta-llama/llama-3.3-70b-instruct:free"]);
+    // boleh mencoba model OpenRouter lain, tapi tidak pernah penyedia lain
+    expect(dipanggil.length).toBeGreaterThan(0);
+    expect(dipanggil.every((x) => x.startsWith("openrouter:"))).toBe(true);
   });
 
   it("WA `or` / `gm` tanpa pertanyaan: dijelaskan cara pakainya, tanpa memanggil AI", async () => {
@@ -426,6 +437,175 @@ describe("pilih penyedia & model sendiri (or / gm / website)", () => {
     const g = await tanyaAsisten(db, { kanal: "web", pesan: "halo", now: at("2026-10-05"), penyedia: "gemini" });
     expect(g).toMatchObject({ ok: false, penyedia: "gemini" });
     expect(g.balasan).toContain("Gemini nggak bisa dipakai");
+    expect(dipanggil.length).toBeGreaterThan(0);
+    expect(dipanggil.every((x) => x.startsWith("gemini:"))).toBe(true);
+  });
+});
+
+describe("model otomatis: pindah ke model yang paling andal kalau model penuh", () => {
+  const penuh = (): HasilClaude => ({ ok: false, alasan: "sibuk", pesan: "This model is currently experiencing high demand. Please try again later. (UNAVAILABLE)", durasiMs: 3 });
+  const ditutup = (m: string): HasilClaude => ({ ok: false, alasan: "gagal", pesan: `This model models/${m} is no longer available to new users. (NOT_FOUND)`, durasiMs: 3 });
+  const lamaJawab = (ms: number): HasilClaude => ({ ok: true, teks: "ok", durasiMs: ms });
+  /** per model: "gemini:<model>" / "openrouter:<model>"; "gemini:*" untuk semua model penyedia itu */
+  let peta: Record<string, () => HasilClaude>;
+  const GM = "gemini-3.6-flash"; // model utama bawaan
+  const GM2 = "gemini-3.5-flash-lite"; // calon pertama setelahnya
+  const OR_PILIH = "meta-llama/llama-3.3-70b-instruct:free";
+  const t0 = at("2026-10-05", 12, 0);
+  const menit = (n: number) => new Date(t0.getTime() + n * 60_000);
+  const req = (now: Date, penyedia: "gemini" | "openrouter", extra: Record<string, unknown> = {}) => panggilAI(db, { fitur: "chat_web", system: "s", prompt: "p", now, penyedia, ...extra });
+
+  beforeEach(async () => {
+    peta = {};
+    aturDaftarModel([
+      { id: "deepseek/deepseek-chat:free", nama: "DeepSeek", konteks: 64000, gambar: false },
+      { id: "google/gemma-3-27b-it:free", nama: "Gemma", konteks: 96000, gambar: true },
+    ]);
+    pulih.unshift(
+      setPenjalanCadangan({
+        gemini: async (p) => (dipanggil.push(`gemini:${p.model}`), (peta[`gemini:${p.model}`] ?? peta["gemini:*"] ?? (() => ok(`G:${p.model}`)))()),
+        openrouter: async (p) => (dipanggil.push(`openrouter:${p.model}`), (peta[`openrouter:${p.model}`] ?? peta["openrouter:*"] ?? (() => ok(`O:${p.model}`)))()),
+      }),
+    );
+    await simpanKunciCadangan(db, "gemini", KUNCI_G);
+    await simpanKunciCadangan(db, "openrouter", KUNCI_O);
+  });
+
+  it("Gemini: model utama penuh → model berikutnya menjawab, dan model yang dilewati dicatat", async () => {
+    peta[`gemini:${GM}`] = penuh;
+    const h = await req(t0, "gemini");
+    expect(h).toMatchObject({ ok: true, penyedia: "gemini", model: GM2 });
+    expect(dipanggil).toEqual([`gemini:${GM}`, `gemini:${GM2}`]);
+    expect((await db.aiCall.findFirst())?.catatan).toContain(`dilewati: ${GM}`);
+    expect(await pemakaianHariIni(db, at("2026-10-05", 13))).toBe(1); // dua percobaan model tetap satu kuota
+  });
+
+  it("model yang baru penuh ditahan, lalu dicoba lagi otomatis setelah masa tahan lewat (3 menit)", async () => {
+    peta[`gemini:${GM}`] = penuh;
+    await req(t0, "gemini");
+    dipanggil = [];
+    await req(menit(1), "gemini"); // masih ditahan: langsung model lain, tanpa menyentuh model yang penuh
+    expect(dipanggil).toEqual([`gemini:${GM2}`]);
+
+    dipanggil = [];
+    delete peta[`gemini:${GM}`]; // sudah pulih
+    const h = await req(menit(4), "gemini"); // masa tahan 3 menit lewat → model utama dicoba duluan lagi
+    expect(dipanggil).toEqual([`gemini:${GM}`]);
+    expect(h).toMatchObject({ ok: true, model: GM });
+  });
+
+  it("model yang ditutup Google ('no longer available') ditahan 24 jam", async () => {
+    peta[`gemini:${GM}`] = () => ditutup(GM);
+    await req(t0, "gemini");
+    dipanggil = [];
+    await req(menit(6 * 60), "gemini");
+    expect(dipanggil).toEqual([`gemini:${GM2}`]); // 6 jam kemudian masih dilewati
+    dipanggil = [];
+    await req(menit(25 * 60), "gemini");
+    expect(dipanggil[0]).toBe(`gemini:${GM}`); // 25 jam kemudian dicoba lagi
+  });
+
+  it("timeout dan batas per model (429) juga pindah ke model lain", async () => {
+    peta[`gemini:${GM}`] = () => ({ ok: false, alasan: "timeout", pesan: "Gemini tidak menjawab tepat waktu", durasiMs: 3 });
+    expect(await req(t0, "gemini")).toMatchObject({ ok: true, model: GM2 });
+    await db.setting.deleteMany({ where: { kunci: "ai_model_statistik" } });
+    dipanggil = [];
+    peta[`gemini:${GM}`] = () => ({ ok: false, alasan: "limit", pesan: "RESOURCE_EXHAUSTED (429)", durasiMs: 3 });
+    expect(await req(menit(1), "gemini")).toMatchObject({ ok: true, model: GM2 });
+  });
+
+  it("semua model penuh: maksimal 4 percobaan, status penyedia gagal; permintaan berikutnya hanya mencoba satu", async () => {
+    peta["gemini:*"] = penuh;
+    const h = await req(t0, "gemini");
+    expect(h.ok).toBe(false);
+    expect(dipanggil).toHaveLength(4);
+    expect(h.ok ? "" : h.pesan).toContain("sedang tidak bisa dipakai");
+    expect(JSON.parse((await db.setting.findUnique({ where: { kunci: "ai_status_gemini" } }))!.nilai)).toMatchObject({ status: "sibuk" });
+    dipanggil = [];
+    await req(menit(1), "gemini"); // semua ditahan: coba satu yang paling cepat habis masa tahannya, bukan menyerah
     expect(dipanggil).toHaveLength(1);
+  });
+
+  it("masalah akun/key (bukan modelnya) berhenti di model pertama dan tidak menahan model", async () => {
+    peta["gemini:*"] = () => ({ ok: false, alasan: "belum_login", pesan: "API key not valid", durasiMs: 3 });
+    const h = await req(t0, "gemini");
+    expect(h).toMatchObject({ ok: false, alasan: "belum_login" });
+    expect(dipanggil).toHaveLength(1);
+    expect(await db.setting.findUnique({ where: { kunci: "ai_model_statistik" } })).toBeNull();
+  });
+
+  it("saklar otomatis mati atau model dipilih eksplisit: satu model saja, tanpa pindah", async () => {
+    peta[`gemini:${GM}`] = penuh;
+    await setSetting(db, "ai_gemini_auto", "0");
+    expect(await req(t0, "gemini")).toMatchObject({ ok: false });
+    expect(dipanggil).toEqual([`gemini:${GM}`]);
+
+    dipanggil = [];
+    await setSetting(db, "ai_gemini_auto", "1");
+    peta["gemini:gemini-3.1-flash-lite"] = penuh;
+    expect(await req(t0, "gemini", { model: "gemini-3.1-flash-lite" })).toMatchObject({ ok: false });
+    expect(dipanggil).toEqual(["gemini:gemini-3.1-flash-lite"]);
+  });
+
+  it("tugas kecil (ringan) mulai dari model ringan", async () => {
+    peta[`gemini:${GM2}`] = penuh;
+    const h = await req(t0, "gemini", { ringan: true });
+    expect(dipanggil[0]).toBe(`gemini:${GM2}`);
+    expect(h).toMatchObject({ ok: true, model: "gemini-3.1-flash-lite" });
+  });
+
+  it("OpenRouter: model pilihan penuh → model gratis lain menjawab (daftar baru dimuat kalau perlu)", async () => {
+    await setSetting(db, "ai_openrouter_model", OR_PILIH);
+    peta[`openrouter:${OR_PILIH}`] = penuh;
+    const h = await req(t0, "openrouter");
+    expect(h.ok).toBe(true);
+    expect(h).not.toMatchObject({ model: OR_PILIH });
+    expect(dipanggil[0]).toBe(`openrouter:${OR_PILIH}`);
+    expect(dipanggil.length).toBeGreaterThanOrEqual(2);
+    // permintaan berikutnya: model pilihan masih ditahan, langsung ke model yang tadi berhasil
+    dipanggil = [];
+    await req(menit(1), "openrouter");
+    expect(dipanggil).toHaveLength(1);
+    expect(dipanggil[0]).not.toBe(`openrouter:${OR_PILIH}`);
+  });
+
+  it("OpenRouter: model pilihan menjawab → tidak ada yang dimuat/dicoba lagi; key ditolak berhenti", async () => {
+    await setSetting(db, "ai_openrouter_model", OR_PILIH);
+    expect(await req(t0, "openrouter")).toMatchObject({ ok: true, model: OR_PILIH });
+    expect(dipanggil).toEqual([`openrouter:${OR_PILIH}`]);
+    dipanggil = [];
+    peta["openrouter:*"] = () => ({ ok: false, alasan: "belum_login", pesan: "No auth credentials found", durasiMs: 3 });
+    expect(await req(menit(1), "openrouter")).toMatchObject({ ok: false, alasan: "belum_login" });
+    expect(dipanggil).toHaveLength(1);
+  });
+
+  it("urutan 'paling ampuh': utama dulu, lalu yang terbukti tercepat, lalu yang belum pernah dicoba; yang ditahan dilewati", () => {
+    const now = t0;
+    const st = (o: Partial<StatModel>): StatModel => ({ ok: 0, gagal: 0, berturut: 0, ms: 0, terakhir: now.toISOString(), ...o });
+    const stat: Record<string, StatModel> = {
+      "gemini|lambat": st({ ok: 5, ms: 5000 }),
+      "gemini|cepat": st({ ok: 5, ms: 500 }),
+      "gemini|pernahgagal": st({ ok: 2, gagal: 1, berturut: 1, ms: 100 }),
+      "gemini|ditahan": st({ gagal: 2, berturut: 2, tahanSampai: menit(10).toISOString() }),
+    };
+    expect(urutkanModel("gemini", ["lambat", "cepat", "baru", "pernahgagal", "ditahan", "utama"], "utama", stat, now)).toEqual(["utama", "cepat", "lambat", "baru", "pernahgagal"]);
+    // utama ditahan → dilewati
+    expect(urutkanModel("gemini", ["ditahan", "cepat"], "ditahan", stat, now)).toEqual(["cepat"]);
+    // semua ditahan → satu yang paling cepat habis masa tahannya
+    expect(urutkanModel("gemini", ["ditahan"], undefined, stat, now)).toEqual(["ditahan"]);
+  });
+
+  it("masa tahan sementara: 3 mnt, lipat dua tiap gagal beruntun, maksimal 30 mnt; sukses mereset", async () => {
+    expect([1, 2, 3, 4, 5, 6, 10].map(tahanSementaraMs)).toEqual([3, 6, 12, 24, 30, 30, 30].map((m) => m * 60_000));
+    await catatModel(db, "gemini", "m", { ok: false, durasiMs: 5 }, "sementara", t0);
+    await catatModel(db, "gemini", "m", { ok: false, durasiMs: 5 }, "sementara", t0);
+    let s = (await bacaStatistik(db))["gemini|m"];
+    expect(s).toMatchObject({ gagal: 2, berturut: 2 });
+    expect(new Date(s.tahanSampai!).getTime() - t0.getTime()).toBe(6 * 60_000);
+    await catatModel(db, "gemini", "m", { ok: true, durasiMs: 1000 }, null, t0);
+    await catatModel(db, "gemini", "m", { ok: true, durasiMs: 2000 }, null, t0);
+    s = (await bacaStatistik(db))["gemini|m"];
+    expect(s).toMatchObject({ ok: 2, berturut: 0, ms: 1300 }); // EWMA: 1000 → 0.7·1000 + 0.3·2000
+    expect(s.tahanSampai).toBeUndefined();
   });
 });

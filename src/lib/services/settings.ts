@@ -31,6 +31,9 @@ export const DEFAULT_SETTINGS = {
   ai_gemini_aktif: "0",
   ai_gemini_model: "gemini-3.6-flash",
   ai_gemini_model_ringan: "gemini-3.5-flash-lite",
+  /** pindah ke model lain otomatis kalau model yang dipilih penuh / timeout / ditutup (Gemini & OpenRouter) */
+  ai_gemini_auto: "1",
+  ai_openrouter_auto: "1",
   ai_openrouter_aktif: "0",
   /** wajib model gratis (berakhiran ":free"); kosong = pilih otomatis model gratis pertama */
   ai_openrouter_model: "",

@@ -180,6 +180,8 @@ export async function simpanCadanganAction(_: FormState, form: FormData): Promis
   await setSetting(prisma, "ai_claude_aktif", onOff("ai_claude_aktif"));
   await setSetting(prisma, "ai_gemini_aktif", onOff("ai_gemini_aktif"));
   await setSetting(prisma, "ai_openrouter_aktif", onOff("ai_openrouter_aktif"));
+  await setSetting(prisma, "ai_gemini_auto", onOff("ai_gemini_auto"));
+  await setSetting(prisma, "ai_openrouter_auto", onOff("ai_openrouter_auto"));
   await setSetting(prisma, "ai_gemini_model", gm);
   await setSetting(prisma, "ai_gemini_model_ringan", gmr);
   await setSetting(prisma, "ai_openrouter_model", om);
