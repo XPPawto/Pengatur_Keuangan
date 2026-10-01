@@ -60,7 +60,7 @@ describe("cadangan otomatis", () => {
     await nyalakanCadangan();
     const h = await tanya(at("2026-10-05"));
     expect(h).toMatchObject({ ok: true, teks: "gemini", penyedia: "gemini" });
-    expect(dipanggil).toEqual([`gemini:gemini-2.5-flash:${KUNCI_G}`]);
+    expect(dipanggil).toEqual([`gemini:gemini-3.6-flash:${KUNCI_G}`]);
     expect(await db.aiCall.findFirst()).toMatchObject({ penyedia: "gemini", utama: true, status: "ok" });
     expect(await pemakaianHariIni(db, at("2026-10-05", 13))).toBe(1);
   });
