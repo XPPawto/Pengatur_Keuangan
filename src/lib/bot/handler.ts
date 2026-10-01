@@ -17,6 +17,8 @@ import { getSetting, getSettingNumber } from "../services/settings";
 import { peranNomor } from "../services/recipients";
 import { logActivity, type Actor } from "../services/activity-log";
 import { lastUndoable, listActivities, undoActivity } from "../services/undo";
+import { cariRiwayat, teksIngatan } from "../ai/ingatan";
+import { daftarMemori, JENIS_MEMORI, LABEL_JENIS, pemakaianMemori, RUANG_PEMILIK } from "../ai/memori";
 import { catatKiriman, namaPengirim, ringkasBagian, usulanBagi, type Bagian } from "../services/extra";
 import { mulaiRekonsiliasi, selesaikanRekonsiliasi } from "../services/reconcile";
 import { deteksiPola, jalankanSaran, proyeksi, saranMingguan, simulasi, type SaranTransfer } from "../services/autopilot";
@@ -248,6 +250,8 @@ async function proses(db: Db, nomor: string, text: string, now: Date): Promise<s
     }
     case "memori":
       return cmdMemori(db);
+    case "ingatan":
+      return cmdIngatan(db, parsed.kata, now);
     case "reset_obrolan":
       await hapusRiwayat(db, nomor);
       return ["Oke, obrolan sama asisten dimulai dari nol. Memori jangka panjang tetap aman (`memori`)."];
@@ -493,9 +497,25 @@ async function cmdIngat(db: Db, isi: string): Promise<string[]> {
 }
 
 async function cmdMemori(db: Db): Promise<string[]> {
-  const rows = await db.aiMemori.findMany({ orderBy: { id: "asc" } });
-  if (!rows.length) return ["Belum ada yang gw inget. Contoh: `ingat kado buat adik, ultah 20 Nov`."];
-  return [["*Yang gw inget tentang lo*", ...rows.map((m) => `${m.id}. ${m.isi}`), "", "Hapus pakai `lupakan <nomor>`."].join("\n")];
+  const [semua, pakai] = await Promise.all([daftarMemori(db, RUANG_PEMILIK), pemakaianMemori(db, RUANG_PEMILIK)]);
+  if (!semua.length) return ["Belum ada yang gw inget. Contoh: `ingat kado buat adik, ultah 20 Nov`."];
+  const baris = ["*Yang gw inget tentang lo*"];
+  for (const j of JENIS_MEMORI) {
+    const e = semua.filter((m) => m.jenis === j);
+    if (!e.length) continue;
+    const p = pakai.find((x) => x.jenis === j)!;
+    baris.push("", `_${LABEL_JENIS[j]} (${p.pakai}/${p.batas})_`, ...e.map((m) => `${m.id}. ${m.isi}${m.sumber === "asisten" ? " ✦" : ""}`));
+  }
+  baris.push("", "✦ = dicatat sendiri oleh asisten. Hapus pakai `lupakan <nomor>`; cari obrolan lama pakai `ingatan <kata>`.");
+  return [baris.join("\n")];
+}
+
+/** `ingatan <kata>`: cari obrolan lama dengan asisten (jendela di luar riwayat aktif). */
+async function cmdIngatan(db: Db, kata: string, now: Date): Promise<string[]> {
+  if (!kata.trim()) return ["Cari apa di obrolan lama? Contoh: `ingatan target kado adik`."];
+  const hasil = await cariRiwayat(db, { query: kata, lingkup: "pemilik", now, maks: 4 });
+  if (!hasil.length) return [`Nggak nemu obrolan lama soal "${kata.slice(0, 60)}".`];
+  return [["*Obrolan lama yang nyambung*", teksIngatan(hasil, now, "Lo", 1800).split("\n").slice(1).join("\n")].join("\n")];
 }
 
 // ---------------------------------------------------------------- foto struk

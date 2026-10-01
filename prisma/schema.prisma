@@ -399,11 +399,29 @@ model AiChat {
 }
 
 // Hal-hal yang diingat asisten tentang pemilik (bisa dilihat & dihapus di website). sumber: pengguna | asisten
+// Memori terkurasi asisten (ala Hermes Agent): dua jenis dengan batas karakter, dikelola lewat tambah / ganti / hapus.
+// ruang: "pemilik" | "grup:<jid>" (catatan grup) | "anggota:<jid>:<nomor>" (profil anggota, hanya atas permintaannya).
+// jenis: profil (tentang pengguna) | catatan (pelajaran & kebiasaan yang diamati asisten). sumber: pengguna | asisten | anggota.
 model AiMemori {
   id         Int      @id @default(autoincrement())
   isi        String
   sumber     String   @default("pengguna")
   dibuatPada DateTime @default(now())
+  ruang      String   @default("pemilik")
+  jenis      String   @default("catatan")
+  diperbarui DateTime @default(now())
+
+  @@index([ruang, jenis])
+}
+
+// Indeks kata untuk mencari riwayat obrolan lama (AiChat) yang relevan dengan pesan baru.
+model AiIngatanKata {
+  id     Int    @id @default(autoincrement())
+  kata   String
+  chatId Int
+
+  @@index([kata])
+  @@index([chatId])
 }
 
 // Kata yang dipelajari bot → amplop (dari pilihan pengguna atau tebakan AI yang disetujui). sumber: pengguna | ai

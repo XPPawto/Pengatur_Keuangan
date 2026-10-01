@@ -58,6 +58,7 @@ export type ParsedMessage =
   | { type: "ingat"; isi: string }
   | { type: "lupakan"; id: number }
   | { type: "memori" }
+  | { type: "ingatan"; kata: string }
   | { type: "reset_obrolan" }
   | { type: "unknown" };
 
@@ -202,6 +203,8 @@ export function parseMessage(raw: string, dict: CategoryDictionary = DEFAULT_DIC
     const penyedia = tanya[1] ? ("openrouter" as const) : tanya[2] ? ("gemini" as const) : tanya[3] ? ("groq" as const) : undefined;
     return { type: "tanya", pertanyaan: raw.trim().replace(/^[^\s:,]+[\s:,]*/, "").trim(), ...(penyedia ? { penyedia } : {}) };
   }
+  const cariIngatan = /^(?:cari ingatan|ingatan|cari obrolan)\s+(.{2,})$/.exec(t);
+  if (cariIngatan) return { type: "ingatan", kata: raw.trim().replace(/^(?:cari ingatan|ingatan|cari obrolan)\s+/i, "").trim() };
   if (/^(memori|ingatan|isi memori|lihat memori)$/.test(t)) return { type: "memori" };
   if (/^(reset obrolan|obrolan baru|mulai obrolan baru|lupakan obrolan)$/.test(t)) return { type: "reset_obrolan" };
   const lupa = /^(?:lupakan|lupain|hapus memori)\s+(?:no\.?\s*|nomor\s+)?(\d+)$/.exec(t);

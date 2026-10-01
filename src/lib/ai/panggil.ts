@@ -17,12 +17,13 @@ export const LABEL_PENYEDIA: Record<Penyedia, string> = { claude: "Claude", gemi
 /** Hasil panggilan beserta penyedia yang akhirnya menjawab. */
 export type HasilAI = HasilClaude & { penyedia?: Penyedia; /** model yang benar-benar dipakai */ model?: string };
 
-export type FiturAI = "chat_web" | "chat_wa" | "chat_grup" | "struk" | "kategori" | "review" | "cek";
+export type FiturAI = "chat_web" | "chat_wa" | "chat_grup" | "memori" | "struk" | "kategori" | "review" | "cek";
 
 export const LABEL_FITUR: Record<FiturAI, string> = {
   chat_web: "Chat website",
   chat_wa: "Asisten WhatsApp",
   chat_grup: "AI grup WhatsApp",
+  memori: "Memori otomatis",
   struk: "Baca foto",
   kategori: "Tebak kategori",
   review: "Review Sabtu",
@@ -244,8 +245,9 @@ export async function statusAI(db: Db, now: Date) {
 /** Panggilan yang benar-benar dicoba hari ini (WIB). */
 export async function pemakaianHariIni(db: Db, now: Date): Promise<number> {
   // satu permintaan = satu, walau dicoba ke beberapa penyedia
-  // AI grup punya batas harian sendiri (grup_ai_batas_harian) supaya ramainya grup tidak menghabiskan jatah pemilik
-  return db.aiCall.count({ where: { waktu: { gte: fromWib(wibDate(now)) }, fitur: { notIn: ["cek", "chat_grup"] }, utama: true } });
+  // AI grup punya batas harian sendiri (grup_ai_batas_harian) supaya ramainya grup tidak menghabiskan jatah pemilik;
+  // perenungan memori di belakang layar juga tidak memakan jatah obrolan (tapi berhenti kalau jatah itu sudah habis)
+  return db.aiCall.count({ where: { waktu: { gte: fromWib(wibDate(now)) }, fitur: { notIn: ["cek", "chat_grup", "memori"] }, utama: true } });
 }
 
 // ---------------------------------------------------------------- panggil

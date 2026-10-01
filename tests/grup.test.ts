@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { HasilClaude } from "@/lib/ai/claude";
 import { aturDaftarGemini } from "@/lib/ai/gemini";
 import { aturDaftarGroq } from "@/lib/ai/groq";
-import { adalahPertanyaan, BANTUAN, bersihkanBalasan, IDENTITAS, jawabanGrupHariIni, pertanyaanIdentitas, prosesPesanGrup, resetKeadaanGrup, SYSTEM_EDITOR, SYSTEM_GRUP, tingkatSoal, urutanGiliran } from "@/lib/ai/grup";
+import { adalahPertanyaan, BANTUAN, bersihkanBalasan, caraKerja, IDENTITAS, NAMA_ASISTEN, pertanyaanTeknis, jawabanGrupHariIni, pertanyaanIdentitas, prosesPesanGrup, resetKeadaanGrup, SYSTEM_EDITOR, SYSTEM_GRUP, tingkatSoal, urutanGiliran } from "@/lib/ai/grup";
 import { aturDaftarModel } from "@/lib/ai/openrouter";
 import { pemakaianHariIni, setPenjalanAI, setPenjalanCadangan, simpanKunciCadangan, simpanTokenAI } from "@/lib/ai/panggil";
 import { dataKoneksi } from "@/lib/services/koneksi";
@@ -510,15 +510,17 @@ describe("tanpa batas pertanyaan (bawaan)", () => {
   });
 });
 
-describe("identitas: Fable 5", () => {
-  it("pertanyaan identitas dijawab langsung 'Fable 5' tanpa memanggil AI dan tanpa memakai jatah", async () => {
+describe("identitas: ChadGPT 6-Astrea", () => {
+  it("pertanyaan identitas dijawab langsung 'ChadGPT 6-Astrea' tanpa memanggil AI dan tanpa memakai jatah", async () => {
     await siapkan(["claude", "gemini"]);
     await setSetting(db, "grup_ai_per_orang_menit", "1"); // jatah ketat pun tidak terpakai oleh pertanyaan identitas
-    for (const t of ["ai apa?", "AI apa ini", "model apa", "model apa ini?", "kamu ai apa", "kamu siapa", "siapa kamu?", "siapa namamu", "nama kamu siapa", "bot apa sih", "pakai model apa", "kamu pake model apa ya", "ai ini apa", "who are you", "which AI are you"]) {
+    for (const t of ["ai apa?", "AI apa ini", "model apa", "model apa ini?", "kamu ai apa", "kamu siapa", "siapa kamu?", "siapa namamu", "nama kamu siapa", "bot apa sih", "ai ini apa", "who are you", "which AI are you"]) {
       const r = await kirim(`/ai ${t}`);
       expect(r, t).toBe(IDENTITAS);
     }
-    expect(IDENTITAS).toContain("Fable 5");
+    expect(IDENTITAS).toContain("ChadGPT 6-Astrea");
+    expect(NAMA_ASISTEN).toBe("ChadGPT 6-Astrea");
+    expect(IDENTITAS).toContain("cara kerjamu"); // jalan masuk ke penjelasan teknis
     expect(dipanggil).toEqual([]);
     expect(await db.aiCall.count()).toBe(0);
   });
@@ -533,12 +535,16 @@ describe("identitas: Fable 5", () => {
     expect(dipanggil).toEqual(["claude"]);
   });
 
-  it("instruksi sistem: nama Fable 5, tidak mengaku manusia, tidak membocorkan cara kerja, tidak mengarang", () => {
-    expect(SYSTEM_GRUP).toContain("*Fable 5*");
+  it("instruksi sistem: nama ChadGPT 6-Astrea, tidak mengaku manusia, menjawab cara kerja dari fakta, tidak membocorkan rahasia", () => {
+    expect(SYSTEM_GRUP).toContain("*ChadGPT 6-Astrea*");
+    expect(SYSTEM_GRUP).not.toContain("Fable");
     expect(SYSTEM_GRUP).toContain("Jangan pernah mengaku manusia");
-    expect(SYSTEM_GRUP).toContain("JANGAN menceritakan cara kerja internalmu");
-    expect(SYSTEM_GRUP).not.toMatch(/bergiliran oleh beberapa penyedia/i); // tidak ada lagi kalimat yang bisa dibocorkan
-    expect(SYSTEM_GRUP).toContain("tidak punya detail teknis");
+    expect(SYSTEM_GRUP).toContain("jawab LENGKAP, jujur, dan akurat");
+    expect(SYSTEM_GRUP).toContain("Fakta cara kerja");
+    expect(SYSTEM_GRUP).toContain("kunci API, token, nomor telepon");
+    expect(SYSTEM_GRUP).not.toContain("JANGAN menceritakan cara kerja internalmu");
+    expect(SYSTEM_GRUP).not.toMatch(/bergiliran oleh beberapa penyedia/i);
+    expect(SYSTEM_EDITOR).not.toContain("tidak menceritakan cara kerja internal");
   });
 
   it("mengirim foto dengan 'ai apa?' bukan pertanyaan identitas (itu tentang fotonya)", async () => {
@@ -760,9 +766,9 @@ describe("kualitas jawaban: premium & tanpa bocoran cara kerja internal", () => 
 
   it("jawaban yang membocorkan cara kerja disaring sebelum sampai ke grup", async () => {
     await siapkan(["claude"]);
-    jawab.claude = () => ok("*Fable 5* di sini.\n\nJawabanku dikerjakan bergiliran oleh beberapa penyedia AI tanpa detail model spesifik. Kalau mau, tanyakan hal lain.");
+    jawab.claude = () => ok("*ChadGPT 6-Astrea* di sini.\n\nJawabanku dikerjakan bergiliran oleh beberapa penyedia AI tanpa detail model spesifik. Kalau mau, tanyakan hal lain.");
     const r = await kirim("/ai kenapa kamu bisa pintar banget?");
-    expect(r).toContain("Fable 5");
+    expect(r).toContain("ChadGPT 6-Astrea");
     expect(r).not.toMatch(/bergiliran|penyedia|detail model/i);
     expect(r).toContain("tanyakan hal lain");
   });
@@ -839,5 +845,71 @@ describe("Groq di AI grup: penyedia keempat", () => {
     expect(r).toContain("Claude + Gemini + OpenRouter + Groq");
     expect(await kirim("!aigrup status", { nomor: OWNER })).toContain("Penyedia: Claude + Gemini + OpenRouter + Groq");
     expect((await dataKoneksi(db, at(12))).grup.roda).toEqual(["claude", "gemini", "openrouter", "groq"]);
+  });
+});
+
+describe("pertanyaan teknis: cara kerja yang sebenarnya", () => {
+  it("mengenali pertanyaan tentang cara kerja asistennya, bukan topik teknis lain", () => {
+    for (const t of ["gimana cara kerjamu?", "cara kerja kamu gimana sih", "kamu pakai model apa", "kamu pake ai apa?", "model apa yang kamu pakai di belakang?", "jelasin dong cara kerja kamu di belakang layar", "kamu itu pakai chatgpt ya?", "arsitektur bot ini gimana?", "kenapa kamu lama banget jawabnya?", "kamu dijalankan di mana?", "teknologi apa yang kamu pakai?", "how do you work?", "what model are you using under the hood?", "secara teknis kamu gimana bekerja?"]) {
+      expect(pertanyaanTeknis(t), t).toBe(true);
+    }
+    for (const t of ["gimana cara kerja mesin cuci?", "kamu pakai apa buat belajar coding?", "gimana cara kerja blockchain", "model apa yang cocok buat mobil listrik", "kenapa langit biru?", "cara kerja vaksin gimana", "apa itu server?", "ai apa yang paling bagus untuk belajar coding?", "siapa kamu?", "kamu pakai kacamata ya?"]) {
+      expect(pertanyaanTeknis(t), t).toBe(false);
+    }
+  });
+
+  it("lembar fakta menjelaskan alur yang benar dan tidak berisi rahasia", () => {
+    const g = caraKerja(["claude", "gemini", "openrouter", "groq"], "gabung", { mode: "perintah" });
+    for (const k of ["ChadGPT 6-Astrea", "Baileys", "Haiku", "Sonnet", "Opus", "SEMUA penyedia yang tersambung sekaligus", "editor", "Gemini", "OpenRouter", "Groq", "15 detik", "30 detik", "60 detik", "Penyedia yang tersambung sekarang: Claude, Gemini, OpenRouter, Groq", "diawali /ai", "Tidak ada batas jumlah pertanyaan", "tidak bisa membuat gambar", "Anthropic, Google, OpenRouter, Groq"]) {
+      expect(g, k).toContain(k);
+    }
+    expect(g).not.toMatch(/DompetKos|sk-|token-claude|6285163544535|08\d{8,}/i);
+    const b = caraKerja(["claude", "gemini"], "giliran", { mode: "semua" });
+    expect(b).toContain("bergiliran (round robin)");
+    expect(b).not.toContain("SEMUA penyedia yang tersambung sekaligus");
+    expect(b).toContain("setiap pesan di grup");
+    expect(caraKerja(["claude"], "gabung")).toContain("tanpa tahap penggabungan"); // satu penyedia: tidak ada yang digabung
+  });
+
+  it("pertanyaan teknis: fakta disisipkan ke draf & penggabungan, jawaban tentang cara kerja tidak disaring", async () => {
+    await siapkan(["claude", "gemini", "openrouter"], { strategi: "gabung" });
+    const jelas = "Aku *ChadGPT 6-Astrea*. Jawabanku dikerjakan bergiliran oleh beberapa penyedia AI lalu digabung oleh editor.";
+    jawab.claude = (pr) => ok(jelas);
+    jawab.gemini = (pr) => ok(pr.includes("## Jawaban A") ? jelas : "draf gemini");
+    jawab.openrouter = () => ok("draf openrouter");
+    const r = await kirim("/ai gimana cara kerjamu di belakang layar?");
+    expect(r).toContain("bergiliran oleh beberapa penyedia AI"); // pertanyaan teknis: boleh membahas cara kerja
+    expect(prompts.filter((p) => p.includes("# Fakta cara kerja"))).toHaveLength(4); // tiga draf + satu penggabungan
+    expect(prompts.every((p) => p.includes("Penyedia yang tersambung sekarang: Claude, Gemini, OpenRouter."))).toBe(true);
+    expect(prompts[0]).toContain("# Pesan baru dari Budi");
+  });
+
+  it("pertanyaan biasa tidak membawa lembar fakta; pertanyaan lanjutan setelah pertanyaan teknis membawanya", async () => {
+    await siapkan(["claude"], { strategi: "gabung" });
+    await kirim("/ai apa itu fotosintesis?", { now: at(12, 0, 0) });
+    expect(prompts[0]).not.toContain("Fakta cara kerja");
+    await kirim("/ai kamu pakai model apa sih?", { now: at(12, 1, 0) });
+    expect(prompts[1]).toContain("# Fakta cara kerja");
+    await kirim("/ai terus yang pertama menjawab siapa?", { now: at(12, 2, 0) }); // lanjutan: fakta masih dibawa
+    expect(prompts[2]).toContain("# Fakta cara kerja");
+    await kirim("/ai berapa 12 x 12?", { now: at(12, 3, 0) });
+    expect(prompts[3]).toContain("# Fakta cara kerja"); // masih dalam dua giliran terakhir
+    await kirim("/ai ibukota jepang?", { now: at(12, 4, 0) });
+    await kirim("/ai ibukota korea?", { now: at(12, 5, 0) });
+    expect(prompts[5]).not.toContain("# Fakta cara kerja"); // sudah dua giliran berlalu: kembali normal
+  });
+
+  it("strategi bergiliran: fakta menjelaskan round robin", async () => {
+    await siapkan(["claude", "gemini"], { strategi: "giliran" });
+    await kirim("/ai bagaimana kamu bekerja?");
+    expect(prompts[0]).toContain("bergiliran (round robin)");
+  });
+
+  it("pertanyaan 'kamu pakai model apa' kini menuju penjelasan lengkap, bukan jawaban identitas singkat", async () => {
+    await siapkan(["claude"]);
+    expect(pertanyaanIdentitas("kamu pakai model apa")).toBe(false);
+    const r = await kirim("/ai kamu pakai model apa");
+    expect(r).not.toBe(IDENTITAS);
+    expect(dipanggil).toEqual(["claude"]);
   });
 });

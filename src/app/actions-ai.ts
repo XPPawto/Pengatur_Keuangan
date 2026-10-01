@@ -6,6 +6,10 @@ import { prisma } from "@/lib/db";
 import { AKTOR_WEB } from "@/lib/services/activity-log";
 import { getSetting, setSetting } from "@/lib/services/settings";
 import { hapusRiwayat, ingat, jalankanAksiAI, lupakan, tanyaAsisten, validasiAksi, type AksiAI } from "@/lib/ai/asisten";
+import { cariRiwayat, token, umurLabel } from "@/lib/ai/ingatan";
+import { daftarMemori, RUANG_PEMILIK, ubahMemori, type JenisMemori } from "@/lib/ai/memori";
+import { jalankanRefleksi } from "@/lib/ai/refleksi";
+import { undoActivity } from "@/lib/services/undo";
 import { CADANGAN, LABEL_KONDISI, LABEL_PENYEDIA, labelKondisiCadangan, simpanKunciCadangan, simpanTokenAI, tesKoneksiAI, type KondisiAI, type Penyedia, type PenyediaCadangan } from "@/lib/ai/panggil";
 import { modelGratis } from "@/lib/ai/openrouter";
 import { modelGroqValid } from "@/lib/ai/groq";
@@ -108,11 +112,14 @@ export async function simpanPengaturanAIAction(_: FormState, form: FormData): Pr
 
 // ---------------------------------------------------------------- memori & kata
 
+const jenisMemori = (v: FormDataEntryValue | null): JenisMemori => (v === "profil" ? "profil" : "catatan");
+
 export async function ingatAction(_: FormState, form: FormData): Promise<FormState> {
   await requireLogin();
   try {
-    const m = await ingat(prisma, String(form.get("isi") ?? ""), "pengguna");
+    const m = await ingat(prisma, String(form.get("isi") ?? ""), "pengguna", jenisMemori(form.get("jenis")));
     revalidatePath("/asisten");
+    revalidatePath("/memori");
     return { ok: `Diingat: ${m.isi}` };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Gagal menyimpan." };
@@ -123,6 +130,81 @@ export async function lupakanAction(form: FormData) {
   await requireLogin();
   await lupakan(prisma, Number(form.get("id")));
   revalidatePath("/asisten");
+  revalidatePath("/memori");
+}
+
+/** Ubah isi satu memori dari halaman Memori (menunjuk entri lewat id, bukan potongan teks). */
+export async function ubahMemoriAction(id: number, teks: string): Promise<{ ok: boolean; pesan: string }> {
+  await requireLogin();
+  const r = await ubahMemori(prisma, RUANG_PEMILIK, { aksi: "ganti", lama: "", id, teks }, "pengguna", new Date());
+  if (r.ok) revalidatePath("/memori");
+  return r.ok ? { ok: true, pesan: "Memori diperbarui." } : { ok: false, pesan: r.pesan };
+}
+
+/** Batalkan satu perubahan memori otomatis (dari linimasa). */
+export async function batalkanMemoriAction(logId: number): Promise<{ ok: boolean; pesan: string }> {
+  await requireLogin();
+  try {
+    const log = await undoActivity(prisma, logId, AKTOR_WEB, new Date());
+    revalidatePath("/memori");
+    revalidatePath("/asisten");
+    return { ok: true, pesan: `Dibatalkan: ${log.ringkasan}` };
+  } catch (e) {
+    return { ok: false, pesan: e instanceof Error ? e.message : "Gagal membatalkan." };
+  }
+}
+
+/** Minta asisten merenungkan obrolan baru sekarang juga (tanpa menunggu giliran / jeda). */
+export async function renungkanAction(): Promise<{ ok: boolean; pesan: string }> {
+  await requireLogin();
+  const r = await jalankanRefleksi(prisma, new Date(), { paksa: true });
+  revalidatePath("/memori");
+  revalidatePath("/asisten");
+  if (!r.jalan) return { ok: false, pesan: r.catatan ?? "Tidak jalan." };
+  if (r.catatan) return { ok: false, pesan: r.catatan };
+  return { ok: true, pesan: r.pesan.length ? r.pesan.join(" · ") : "Selesai merenung: tidak ada yang baru layak diingat." };
+}
+
+export async function simpanPengaturanMemoriAction(_: FormState, form: FormData): Promise<FormState> {
+  await requireLogin();
+  const tiap = Math.min(10, Math.max(1, Math.round(Number(form.get("memori_refleksi_tiap")) || 3)));
+  await setSetting(prisma, "memori_belajar", form.get("memori_belajar") ? "1" : "0");
+  await setSetting(prisma, "memori_ingatan_obrolan", form.get("memori_ingatan_obrolan") ? "1" : "0");
+  await setSetting(prisma, "memori_refleksi_tiap", String(tiap));
+  revalidatePath("/memori");
+  return { ok: "Pengaturan memori disimpan." };
+}
+
+export interface HasilUjiIngatan {
+  kata: string[];
+  /** id node memori yang kata kuncinya cocok */
+  memori: { id: number; isi: string; jenis: string; cocok: string[] }[];
+  obrolan: { kanal: string; umur: string; tanya?: string; jawab?: string; skor: number }[];
+}
+
+/**
+ * "Uji ingatan": tunjukkan apa yang akan diingat asisten kalau pesan ini dikirim: kata kunci, memori yang cocok,
+ * dan potongan obrolan lama yang akan disisipkan ke prompt. Tidak memanggil AI.
+ */
+export async function ujiIngatanAction(query: string): Promise<HasilUjiIngatan> {
+  await requireLogin();
+  const now = new Date();
+  const kata = token(String(query).slice(0, 500));
+  const entri = await daftarMemori(prisma, RUANG_PEMILIK);
+  const memori = entri
+    .map((e) => {
+      const t = new Set(token(e.isi));
+      return { id: e.id, isi: e.isi, jenis: e.jenis, cocok: kata.filter((k) => t.has(k)) };
+    })
+    .filter((m) => m.cocok.length)
+    .sort((a, b) => b.cocok.length - a.cocok.length)
+    .slice(0, 8);
+  const potongan = kata.length ? await cariRiwayat(prisma, { query, lingkup: "pemilik", now, maks: 5 }).catch(() => []) : [];
+  return {
+    kata,
+    memori,
+    obrolan: potongan.map((p) => ({ kanal: p.kanal, umur: umurLabel(p.waktu, now), tanya: p.tanya?.slice(0, 160), jawab: p.jawab?.slice(0, 200), skor: Math.round(p.skor * 10) / 10 })),
+  };
 }
 
 export async function hapusKataAction(form: FormData) {

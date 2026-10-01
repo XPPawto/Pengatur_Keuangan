@@ -26,6 +26,7 @@ const LABEL: Record<string, string> = {
   chat_web: "Chat website",
   chat_wa: "Asisten WhatsApp",
   chat_grup: "AI grup WhatsApp",
+  memori: "Memori otomatis",
   struk: "Baca foto",
   review: "Review Sabtu",
   kategori: "Tebak kategori",

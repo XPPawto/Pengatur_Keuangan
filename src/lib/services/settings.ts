@@ -53,6 +53,22 @@ export const DEFAULT_SETTINGS = {
   grup_ai_strategi: "gabung",
   /** hitungan internal jawaban hari ini: "YYYY-MM-DD:jumlah" */
   grup_ai_hitung: "",
+  // ---- memori asisten (ala Hermes Agent)
+  /** batas karakter memori Profil / Catatan milik pemilik (ruang lain lebih kecil) */
+  memori_batas_profil: "1400",
+  memori_batas_catatan: "2200",
+  /** asisten boleh menyimpan / merapikan memori sendiri lewat perenungan otomatis */
+  memori_belajar: "1",
+  /** perenungan setelah sekian pesan pemilik, dan juga saat obrolan berhenti sekian menit */
+  memori_refleksi_tiap: "3",
+  memori_refleksi_idle_menit: "15",
+  /** sisipkan potongan obrolan lama yang relevan ke prompt */
+  memori_ingatan_obrolan: "1",
+  /** penanda internal: id AiChat terakhir yang sudah diindeks */
+  memori_indeks_sampai: "0",
+  // penanda perenungan otomatis: id AiChat terakhir yang sudah dibaca ("" = belum diinisialisasi) dan waktu percobaan terakhir
+  memori_refleksi_id: "",
+  memori_refleksi_coba: "",
   ai_openrouter_auto: "1",
   ai_groq_aktif: "0",
   /** Groq: model utama & model tugas kecil; pindah model otomatis kalau penuh / batas / dihentikan */

@@ -8,10 +8,14 @@ export async function listActivities(db: Db, opts: { take?: number; skip?: numbe
   return db.activityLog.findMany({ orderBy: [{ waktu: "desc" }, { id: "desc" }], take: opts.take ?? 50, skip: opts.skip });
 }
 
-/** Aksi terakhir yang masih bisa dibatalkan (siapa pun pelakunya, karena datanya dipakai bersama). */
+/**
+ * Aksi terakhir yang masih bisa dibatalkan (siapa pun pelakunya, karena datanya dipakai bersama).
+ * Catatan memori otomatis dikecualikan: ia muncul di belakang layar, jadi "batal" tidak boleh salah sasaran;
+ * membatalkannya lewat halaman Memori / Aktivitas.
+ */
 export async function lastUndoable(db: Db) {
   return db.activityLog.findFirst({
-    where: { undo: { not: null }, dibatalkanPada: null },
+    where: { undo: { not: null }, dibatalkanPada: null, aksi: { not: "memori" } },
     orderBy: [{ waktu: "desc" }, { id: "desc" }],
   });
 }
@@ -131,6 +135,14 @@ async function jalankan(db: Db, u: Undo, now: Date) {
       await db.debtPayment.deleteMany({ where: { id: u.paymentId } });
       await db.debt.updateMany({ where: { id: u.debtId }, data: { status: u.statusSebelum, lunasPada: null } });
       return;
+    case "memori": {
+      for (const r of u.pulihkan) {
+        const data = { ruang: r.ruang, jenis: r.jenis, isi: r.isi, sumber: r.sumber, dibuatPada: new Date(r.dibuatPada), diperbarui: new Date(r.diperbarui) };
+        await db.aiMemori.upsert({ where: { id: r.id }, update: data, create: { id: r.id, ...data } });
+      }
+      if (u.hapus.length) await db.aiMemori.deleteMany({ where: { id: { in: u.hapus } } });
+      return;
+    }
     case "pemasukan": {
       const envs = await db.envelope.findMany();
       for (const kode of ENVELOPE_KODE) {
