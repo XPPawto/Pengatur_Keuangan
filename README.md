@@ -44,7 +44,7 @@ Semua fase PRD (1–3) sudah dikerjakan, ditambah fitur lanjutan: **undo untuk s
 | Aktivitas | Jejak semua perubahan (siapa, kapan, dari WA/web) dan tombol Batalkan untuk tiap aksi |
 | Asisten AI | Chat dengan Claude soal duit lo (pertanyaan, rencana menu, kenapa boros, target kado, draf pesan ke ortu), usulan aksi yang dijalankan setelah disetujui, memori, kata yang dipelajari, saklar fitur & batas harian |
 | Kesehatan sistem | Status bot, WhatsApp, antrean pesan, backup, penyimpanan, asisten AI; endpoint `/api/health` |
-| Koneksi | **Peta node** DompetKos ↔ WhatsApp (nomor pemilik, keluarga, antrean) ↔ Claude (fitur AI), garis bergerak saat tersambung, bisa digeser & zoom; pairing WhatsApp (QR/kode); token Claude; **batas langganan sesi 5 jam & mingguan** + jam reset; **pemakaian Claude** (panggilan, token, waktu jawab, grafik harian, log) |
+| Koneksi | **Peta node realtime** DompetKos ↔ WhatsApp (nomor pemilik, keluarga, antrean) ↔ Claude (fitur AI): titik cahaya berjalan di garis setiap ada pesan WA masuk/keluar dan setiap Claude dipanggil (node Claude berdenyut selama mikir, balik hijau/merah), log aktivitas langsung tanpa isi pesan, bisa digeser & zoom; pairing WhatsApp (QR/kode); token Claude; **batas langganan sesi 5 jam & mingguan** + jam reset; **pemakaian Claude** (panggilan, token, waktu jawab, grafik harian, log) |
 | Pengaturan | Nomor penerima & perannya, jadwal pengingat, nama, batas tahan belanja, login kode WA, ekspor Excel/CSV, backup & unduh backup, antrean pesan otomatis |
 
 Semua grafik punya tooltip saat disentuh dan tampilan tabel. Transaksi dari WhatsApp muncul di website dalam ±4 detik tanpa refresh.
@@ -228,7 +228,7 @@ Aturan anti-spam: **tidak ada pesan 22.00–06.00**, **maksimal 1 pesan otomatis
 ## 11. Untuk developer
 
 ```bash
-npm test           # 248 tes: parser, jatah, aturan potong, alur bot, keluarga, penjadwal, aturan kirim,
+npm test           # 250 tes: parser, jatah, aturan potong, alur bot, keluarga, penjadwal, aturan kirim,
                    # undo, rekonsiliasi, kiriman, hutang-piutang, autopilot, skor, struk, ekspor, backup, OTP,
                    # asisten AI (runner CLI, kuota, status, usulan, memori, foto, review) — tanpa memanggil Claude asli
 npm run typecheck

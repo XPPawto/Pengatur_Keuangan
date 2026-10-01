@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import type { DataKoneksi } from "@/lib/services/koneksi";
 import { Icon, Logo, type IconName } from "./icons";
 import { useWidth } from "./charts/useWidth";
+import { useDenyut, type LogLive } from "./useDenyut";
 
 type IdFitur = "chat_web" | "chat_wa" | "struk" | "review" | "kategori";
 type IdNode = "hub" | "wa" | "pemilik" | "keluarga" | "antrean" | "claude" | IdFitur | "fitur";
@@ -221,6 +222,31 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
   const [t, setT] = useState(fit);
   const geser = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
   const kanvas = useRef<HTMLDivElement>(null);
+  const garis = useRef(new Map<string, SVGPathElement>());
+  const { jejak, berjalan, log, waktu } = useDenyut();
+
+  // node fitur yang tidak ada di tata letak ini (HP) dipetakan ke kartu "Fitur AI"
+  const petakan = (id: string) => (tata.pos[id as IdNode] ? id : "fitur");
+  const titik = jejak
+    .filter((j) => waktu >= j.mulai && waktu <= j.mulai + j.durasi)
+    .map((j) => {
+      const dari = petakan(j.dari);
+      const ke = petakan(j.ke);
+      if (dari === ke) return null;
+      const maju = garis.current.get(`${dari}-${ke}`);
+      const el = maju ?? garis.current.get(`${ke}-${dari}`);
+      if (!el) return null;
+      const p = (waktu - j.mulai) / j.durasi;
+      const halus = p < 0.5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2;
+      const L = el.getTotalLength();
+      const pt = el.getPointAtLength((maju ? halus : 1 - halus) * L);
+      return { id: j.id, x: pt.x, y: pt.y, warna: j.warna };
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+  // node yang barusan dilewati titik menyala sebentar
+  const kilat = new Map<string, string>();
+  for (const j of jejak) if (waktu > j.mulai + j.durasi && waktu < j.mulai + j.durasi + 500) kilat.set(petakan(j.ke), j.warna);
+  const fiturJalan = new Set([...berjalan.values()].map(petakan));
 
   useEffect(() => setT(fit()), [fit]);
 
@@ -287,6 +313,10 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
               return (
                 <path
                   key={`${a}-${b}`}
+                  ref={(el) => {
+                    if (el) garis.current.set(`${a}-${b}`, el);
+                    else garis.current.delete(`${a}-${b}`);
+                  }}
                   d={kurva(tata.pos[a]!, tata.pos[b]!, tata.arah)}
                   fill="none"
                   stroke={g.stroke}
@@ -297,6 +327,12 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
                 />
               );
             })}
+            {titik.map((t) => (
+              <g key={t.id}>
+                <circle cx={t.x} cy={t.y} r={13} fill={t.warna} opacity={0.2} />
+                <circle cx={t.x} cy={t.y} r={6} fill={t.warna} stroke="var(--card)" strokeWidth={1.5} />
+              </g>
+            ))}
           </svg>
           {(Object.keys(tata.pos) as IdNode[]).map((id) => {
             const n = node[id];
@@ -304,7 +340,7 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
             const isHub = id === "hub";
             if (n.daftar) {
               return (
-                <Link key={id} href={n.href} draggable={false} className="absolute w-[300px] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-line bg-card p-2.5 shadow-sm" style={{ left: x, top: y }}>
+                <Link key={id} href={n.href} draggable={false} className={`absolute w-[300px] -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card p-2.5 shadow-sm transition-shadow ${fiturJalan.has(id) ? "border-claude" : "border-line"}`} style={{ left: x, top: y, boxShadow: kilat.has(id) ? `0 0 0 4px color-mix(in srgb, ${kilat.get(id)} 30%, transparent)` : undefined }}>
                   <span className="mb-1.5 block px-1 text-xs font-semibold uppercase tracking-wide text-muted">{n.judul}</span>
                   <span className="grid grid-cols-1 gap-1">
                     {n.daftar.map((f) => (
@@ -325,13 +361,13 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
                 key={id}
                 href={n.href}
                 draggable={false}
-                className={`absolute flex -translate-x-1/2 -translate-y-1/2 items-center gap-2.5 rounded-xl border bg-card px-3 py-2 shadow-sm transition hover:border-line-strong ${isHub ? "max-w-[240px]" : tata === SEMPIT ? "max-w-[190px]" : "max-w-[230px]"} ${n.nada ? NADA_BORDER[n.nada] : "border-line"}`}
-                style={{ left: x, top: y }}
+                className={`absolute flex -translate-x-1/2 -translate-y-1/2 items-center gap-2.5 rounded-xl border bg-card px-3 py-2 shadow-sm transition hover:border-line-strong ${isHub ? "max-w-[240px]" : tata === SEMPIT ? "max-w-[190px]" : "max-w-[230px]"} ${n.nada ? NADA_BORDER[n.nada] : "border-line"} ${(id === "claude" && berjalan.size) || fiturJalan.has(id) ? "mikir border-claude" : ""}`}
+                style={{ left: x, top: y, boxShadow: kilat.has(id) ? `0 0 0 4px color-mix(in srgb, ${kilat.get(id)} 30%, transparent)` : undefined }}
               >
                 {n.ikon}
                 <span className="min-w-0">
                   <span className={`block truncate text-sm font-semibold ${isHub ? "text-brand" : n.nada === "claude" ? "text-claude" : "text-fg"}`}>{n.judul}</span>
-                  <span className="block truncate text-[11px] leading-tight text-muted">{n.sub}</span>
+                  <span className="block truncate text-[11px] leading-tight text-muted">{id === "claude" && berjalan.size ? `Lagi mikir… (${berjalan.size})` : n.sub}</span>
                 </span>
               </Link>
             );
@@ -358,6 +394,7 @@ export default function PetaKoneksi({ awal }: { awal: DataKoneksi }) {
         <Legenda warna="var(--bad)" putus label="Terputus / error" />
         <li className="hidden sm:block">Geser untuk pindah · Ctrl + scroll untuk zoom</li>
       </ul>
+      <AktivitasLive log={log} />
     </div>
   );
 }
@@ -370,5 +407,35 @@ function Legenda({ warna, label, alir, putus, op }: { warna: string; label: stri
       </svg>
       {label}
     </li>
+  );
+}
+
+const NADA_LOG: Record<LogLive["nada"], string> = { ok: "text-ok", claude: "text-claude", bad: "text-bad", muted: "text-muted" };
+
+/** Log aktivitas langsung di bawah peta (tanpa isi pesan). */
+function AktivitasLive({ log }: { log: LogLive[] }) {
+  return (
+    <div className="mt-3 rounded-xl border border-line bg-card p-3">
+      <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted">
+        <span className="relative flex size-2">
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-ok opacity-60 motion-reduce:animate-none" />
+          <span className="relative inline-flex size-2 rounded-full bg-ok" />
+        </span>
+        Aktivitas langsung
+      </p>
+      {log.length ? (
+        <ul className="space-y-1.5" aria-live="polite">
+          {log.map((l) => (
+            <li key={l.id} className="flex items-center gap-2 text-sm">
+              <span className="num w-16 shrink-0 text-xs text-muted">{l.waktu.toLocaleTimeString("id-ID", { timeZone: "Asia/Jakarta", hour12: false })}</span>
+              <Icon name={l.ikon} size={15} className={`shrink-0 ${NADA_LOG[l.nada]}`} />
+              <span className="min-w-0 truncate">{l.teks}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted">Menunggu aktivitas… Kirim pesan ke bot atau tanya asisten, nanti garisnya jalan.</p>
+      )}
+    </div>
   );
 }

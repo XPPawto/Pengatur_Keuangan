@@ -196,3 +196,22 @@ body {
     animation: none;
   }
 }
+
+/* node yang sedang menunggu jawaban Claude */
+@keyframes mikir {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--claude) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--claude) 0%, transparent);
+  }
+}
+.mikir {
+  animation: mikir 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mikir {
+    animation: none;
+  }
+}
