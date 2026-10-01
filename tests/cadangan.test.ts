@@ -680,3 +680,71 @@ describe("penemuan model Gemini dari Google", () => {
     expect(st["gemini|m1"].tahanSampai).toBeUndefined();
   });
 });
+
+describe("OpenRouter: header 200 cepat, badan jawaban lambat / kosong", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const OR = { system: "s", prompt: "p", model: "meta-llama/llama-3.3-70b-instruct:free", apiKey: KUNCI_O };
+
+  it("batas waktu habis saat membaca badan jawaban → timeout (bukan 'OpenRouter 200' / gagal)", async () => {
+    const badanMacet = new ReadableStream({ start: (c) => c.error(Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" })) });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(badanMacet, { status: 200 })));
+    const h = await penjalanOpenRouter(OR);
+    expect(h).toMatchObject({ ok: false, alasan: "timeout", pesan: "OpenRouter tidak menjawab tepat waktu" });
+  });
+
+  it("badan terputus bukan karena timeout → sibuk (coba model lain), bukan gagal", async () => {
+    const putus = new ReadableStream({ start: (c) => c.error(new Error("socket hang up")) });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(putus, { status: 200 })));
+    const h = await penjalanOpenRouter(OR);
+    expect(h).toMatchObject({ ok: false, alasan: "sibuk" });
+    expect(h.ok ? "" : h.pesan).toContain("terputus");
+  });
+
+  it("200 tanpa teks (model reasoning kehabisan token) → sibuk dengan alasan yang jelas", async () => {
+    const badan = JSON.stringify({ choices: [{ message: { content: null, reasoning: "mikir panjang…" }, finish_reason: "length" }], usage: { prompt_tokens: 10, completion_tokens: 2000 } });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`  \n  ${badan}`, { status: 200 }))); // OpenRouter menambah spasi di depan sambil menunggu
+    const h = await penjalanOpenRouter(OR);
+    expect(h).toMatchObject({ ok: false, alasan: "sibuk", token: { masuk: 10, keluar: 2000 } });
+    expect(h.ok ? "" : h.pesan).toMatch(/membalas kosong \(length\)/);
+  });
+
+  it("jawaban normal dengan spasi di depan badan tetap terbaca", async () => {
+    const badan = JSON.stringify({ choices: [{ message: { content: "Halo!" }, finish_reason: "stop" }] });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(`\n\n   ${badan}`, { status: 200 })));
+    expect(await penjalanOpenRouter(OR)).toMatchObject({ ok: true, teks: "Halo!" });
+  });
+
+  it("timeout / sibuk / kosong dikenali sebagai salah modelnya: model ditahan dan model lain dicoba", async () => {
+    const { jenisGagal } = await import("@/lib/ai/modelOtomatis");
+    for (const alasan of ["timeout", "sibuk"] as const) {
+      expect(jenisGagal("openrouter", { ok: false, alasan, pesan: "OpenRouter tidak menjawab tepat waktu", durasiMs: 30000 })).toBe("sementara");
+    }
+    // sebelum perbaikan: 'gagal' + 'OpenRouter 200' → null → berhenti tanpa mencoba model lain
+    expect(jenisGagal("openrouter", { ok: false, alasan: "gagal", pesan: "OpenRouter 200", durasiMs: 30000 })).toBeNull();
+  });
+
+  it("pipeline: model pilihan timeout di badan jawaban → ditahan, model gratis lain menjawab", async () => {
+    await nyalakanCadangan();
+    aturDaftarModel([
+      { id: "deepseek/deepseek-chat:free", nama: "DeepSeek", konteks: 64000, gambar: false },
+      { id: "google/gemma-3-27b-it:free", nama: "Gemma", konteks: 96000, gambar: true },
+    ]);
+    jawab.openrouter = () => ok("openrouter");
+    let n = 0;
+    pulih.unshift(
+      setPenjalanCadangan({
+        gemini: async (p) => (dipanggil.push(`gemini:${p.model}`), ok("gemini")),
+        openrouter: async (p) => (dipanggil.push(`openrouter:${p.model}`), n++ === 0 ? { ok: false, alasan: "timeout", pesan: "OpenRouter tidak menjawab tepat waktu", durasiMs: 30000 } : ok("dari model lain")),
+      }),
+    );
+    const h = await panggilAI(db, { fitur: "chat_grup", system: "s", prompt: "p", now: at("2026-10-05"), penyedia: "openrouter" });
+    expect(h).toMatchObject({ ok: true, teks: "dari model lain" });
+    expect(dipanggil[0]).toBe("openrouter:meta-llama/llama-3.3-70b-instruct:free"); // model pilihan dicoba dulu
+    expect(dipanggil[1]).not.toBe(dipanggil[0]);
+    // permintaan berikutnya: model yang timeout ditahan, langsung ke model yang berhasil
+    dipanggil = [];
+    await panggilAI(db, { fitur: "chat_grup", system: "s", prompt: "p", now: at("2026-10-05", 12, 1), penyedia: "openrouter" });
+    expect(dipanggil).toHaveLength(1);
+    expect(dipanggil[0]).not.toBe("openrouter:meta-llama/llama-3.3-70b-instruct:free");
+  });
+});

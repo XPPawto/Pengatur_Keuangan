@@ -95,14 +95,34 @@ export const penjalanOpenRouter: PenjalanOpenRouter = async (p) => {
     const timeout = e instanceof Error && e.name === "TimeoutError";
     return hasil({ ok: false, alasan: timeout ? "timeout" : "sibuk", pesan: timeout ? "OpenRouter tidak menjawab tepat waktu" : `Tidak bisa menghubungi OpenRouter: ${e instanceof Error ? e.message : e}` });
   }
-  const j = (await r.json().catch(() => null)) as {
-    choices?: { message?: { content?: string } }[];
+  // OpenRouter mengirim header 200 hampir seketika, lalu badan jawaban baru menyusul setelah model selesai (model gratis bisa
+  // 30–60 dtk). Batas waktu yang habis SAAT membaca badan harus dikenali sebagai timeout, bukan "OpenRouter 200" / gagal biasa:
+  // hanya dengan begitu perpindahan model otomatis dan masa tahan model berjalan.
+  let mentah: string;
+  try {
+    mentah = await r.text();
+  } catch (e) {
+    const habis = e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+    return hasil({ ok: false, alasan: habis ? "timeout" : "sibuk", pesan: habis ? "OpenRouter tidak menjawab tepat waktu" : `Jawaban OpenRouter terputus: ${e instanceof Error ? e.message : e}` });
+  }
+  let j = null as {
+    choices?: { message?: { content?: string }; finish_reason?: string }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
     error?: { message?: string; code?: number };
   } | null;
+  try {
+    j = JSON.parse(mentah.trim());
+  } catch {
+    j = null;
+  }
   const token = j?.usage ? { masuk: Math.round(j.usage.prompt_tokens ?? 0), keluar: Math.round(j.usage.completion_tokens ?? 0) } : undefined;
   const teks = j?.choices?.[0]?.message?.content;
   if (r.ok && !j?.error && typeof teks === "string" && teks.trim()) return hasil({ ok: true, teks, token });
+  // 200 tapi tanpa teks (mis. model "reasoning" menghabiskan batas token untuk berpikir): salah modelnya, bukan akun
+  if (r.ok && !j?.error) {
+    const sebab = j?.choices?.[0]?.finish_reason;
+    return hasil({ ok: false, alasan: "sibuk", pesan: `OpenRouter membalas kosong${sebab ? ` (${sebab})` : ""}: modelnya tidak menghasilkan teks`, token });
+  }
   let pesan = (j?.error?.message || `OpenRouter ${r.status}`).slice(0, 300);
   if (blokirPrivasi(pesan)) pesan = `${pesan} — Buka openrouter.ai/settings/privacy lalu izinkan model gratis (free endpoints), kemudian tes lagi.`;
   return hasil({ ok: false, alasan: golongkanOpenRouter(j?.error?.code ?? r.status, pesan), pesan, token });
